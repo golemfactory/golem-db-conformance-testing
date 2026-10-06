@@ -1,0 +1,25 @@
+# Same database (20k records preloaded, one unmeasured warm-up commit) and the same 25,000 writes each; only commit size differs.
+# Run all: cargo load scenarios/block-size
+name = "4-blocks-of-5000"
+description = "25,000 writes committed 5,000 per commit, starting from a 20k-record database"
+seed = 2
+preload = 20000
+
+[database]
+hash = "keccak-256"
+limits = { max_cell_name_len = 32, max_str_len = 64, max_bytes_len = 1024 }
+
+[shape]
+attributes = [
+    { name = "type", type = "str", cardinality = 20, len = 16 },
+    { name = "owner", type = "u64", cardinality = 10000, distribution = "zipf" },
+    { name = "created", type = "u64", distribution = "unique" },
+]
+fields = [{ name = "payload", type = "bytes", len = 256 }]
+
+[workload]
+kind = "blocks"
+blocks = [
+    { ops = 10, warmup = true },  # first commit after preload is unusually fast; not measured
+    { ops = 5000, repeat = 5 },
+]

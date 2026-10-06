@@ -1,0 +1,24 @@
+# Test 1: does commit cost grow with the number of commits when the data does not grow?
+name = "commit-growth"
+description = "20k records created, then 2,000 commits each patching 10 existing records (live data stays constant)"
+seed = 4
+commit_log = "results/commit-growth.csv"
+
+[database]
+hash = "keccak-256"
+limits = { max_cell_name_len = 32, max_str_len = 64, max_bytes_len = 1024 }
+
+[shape]
+attributes = [
+    { name = "type", type = "str", cardinality = 20, len = 16 },
+    { name = "owner", type = "u64", cardinality = 10000, distribution = "zipf" },
+    { name = "created", type = "u64", distribution = "unique" },
+]
+fields = [{ name = "payload", type = "bytes", len = 256 }]
+
+[workload]
+kind = "blocks"
+blocks = [
+    { ops = 1000, repeat = 20 },                                   # build 20k records
+    { ops = 10, repeat = 2000, mix = { create = 0, patch = 1 } },  # then only patch them
+]

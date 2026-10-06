@@ -1,0 +1,16 @@
+[package]
+name = "golemdb-harness"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+golemdb-api = { path = "../../golem-db/crates/api", features = ["mdbx"] }
+anyhow = "1"
+hdrhistogram = "7"
+rand = "0.9"
+rand_chacha = "0.9"
+rand_distr = "0.5"
+serde = { version = "1", features = ["derive"] }
+toml = "0.9"

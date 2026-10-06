@@ -1,0 +1,24 @@
+# 8 writers race to commit (first committer wins; losers retry on the new head).
+name = "concurrent-writers"
+description = "8 writers racing to commit 100-op batches (create/patch/delete); losers retry"
+seed = 3
+preload = 20000
+
+[database]
+hash = "keccak-256"
+limits = { max_cell_name_len = 32, max_str_len = 64, max_bytes_len = 1024 }
+
+[shape]
+attributes = [
+    { name = "type", type = "str", cardinality = 20, len = 16 },
+    { name = "owner", type = "u64", cardinality = 10000, distribution = "zipf" },
+    { name = "created", type = "u64", distribution = "unique" },
+]
+fields = [{ name = "payload", type = "bytes", len = 256 }]
+
+[workload]
+kind = "writers"
+writers = 8
+ops_per_branch = 100
+duration_secs = 30
+mix = { create = 6, patch = 3, delete = 1 }

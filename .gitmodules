@@ -1,0 +1,4 @@
+[submodule "golem-db"]
+	path = golem-db
+	url = https://github.com/golemfactory/golem-db
+	branch = feature/golem-db-api

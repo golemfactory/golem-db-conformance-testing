@@ -1,0 +1,3 @@
+[alias]
+# `cargo load scenarios/...`: always a release build, so numbers mean something.
+load = "run --release -q -p golemdb-harness --"

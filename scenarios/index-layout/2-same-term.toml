@@ -1,0 +1,17 @@
+# Same 50k records each; only [shape] differs.  Run all: cargo load scenarios/index-layout
+name = "2-same-term"
+description = "Every record writes the same indexed value (one shared posting list)"
+seed = 1
+
+[database]
+hash = "keccak-256"
+limits = { max_cell_name_len = 32, max_str_len = 64, max_bytes_len = 1024 }
+
+[shape]
+# every record joins the same posting list
+attributes = [{ name = "value", type = "u64", cardinality = 1 }]
+fields = [{ name = "payload", type = "bytes", len = 256 }]
+
+[workload]
+kind = "blocks"
+blocks = [{ ops = 1000, repeat = 50 }]

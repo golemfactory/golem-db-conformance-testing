@@ -1,0 +1,17 @@
+# Same 50k records each; only [shape] differs.  Run all: cargo load scenarios/index-layout
+name = "3-16-terms"
+description = "Indexed value spread over 16 distinct values (16 posting lists)"
+seed = 1
+
+[database]
+hash = "keccak-256"
+limits = { max_cell_name_len = 32, max_str_len = 64, max_bytes_len = 1024 }
+
+[shape]
+# records spread over 16 posting lists
+attributes = [{ name = "value", type = "u64", cardinality = 16 }]
+fields = [{ name = "payload", type = "bytes", len = 256 }]
+
+[workload]
+kind = "blocks"
+blocks = [{ ops = 1000, repeat = 50 }]
