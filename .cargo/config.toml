@@ -1,3 +1,11 @@
 [alias]
 # `cargo load scenarios/...`: always a release build, so numbers mean something.
 load = "run --release -q -p golemdb-harness --"
+
+# Frame pointers in every build, Rust and libmdbx's C, so `profile_at` profiles
+# unwind and any build can be profiled;
+[build]
+rustflags = ["-C", "force-frame-pointers=yes"]
+
+[env]
+CFLAGS = "-fno-omit-frame-pointer"

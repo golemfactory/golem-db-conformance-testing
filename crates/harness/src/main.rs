@@ -2,32 +2,47 @@
 
 mod config;
 mod generate;
+mod profile;
 mod stats;
+mod tables;
 mod workloads;
 
 use std::path::{Path, PathBuf};
+use std::process::Command;
 use std::sync::Arc;
 use std::time::Duration;
 
-use anyhow::Result;
+use anyhow::{Context, Result, bail};
 use config::{Scenario, Workload};
 use golemdb_api::{Api, GenesisConfig, GolemDb, MdbxOptions, OpenConfig};
 
 pub type Db = Arc<dyn Api + Send + Sync>;
 
 fn main() -> Result<()> {
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    if let [flag, dir] = args.as_slice()
+        && flag == "--table-stats"
+    {
+        return tables::print(Path::new(dir));
+    }
     let mut paths = Vec::new();
-    for arg in std::env::args().skip(1) {
-        paths.extend(toml_files(Path::new(&arg))?);
+    for arg in &args {
+        paths.extend(toml_files(Path::new(arg))?);
     }
     if paths.is_empty() {
-        anyhow::bail!("usage: golemdb-harness <scenario.toml | dir>...");
+        bail!("usage: golemdb-harness <scenario.toml | dir>...");
     }
 
+    let scenarios = paths
+        .iter()
+        .map(|path| Scenario::load(path))
+        .collect::<Result<Vec<_>>>()?;
+    if scenarios.iter().any(|s| !s.profile_at.is_empty()) {
+        profile::check()?;
+    }
     let mut rows = Vec::new();
-    for path in paths {
-        let scenario = Scenario::load(&path)?;
-        rows.push(run(&scenario)?);
+    for scenario in &scenarios {
+        rows.push(run(scenario)?);
     }
     if rows.len() > 1 {
         println!(
@@ -46,6 +61,7 @@ fn run(scenario: &Scenario) -> Result<String> {
     let dir = Path::new(&scenario.database.path);
     let _ = std::fs::remove_dir_all(dir);
     std::fs::create_dir_all(dir)?;
+    nocow(dir)?;
     let config = OpenConfig::new(GenesisConfig {
         hash_function: scenario.database.hash,
         cell_limits: scenario.database.limits,
@@ -108,6 +124,29 @@ fn run(scenario: &Scenario) -> Result<String> {
         stats.p50_ms("commit"),
         scenario.description
     ))
+}
+
+/// On btrfs, turns copy-on-write off for the (empty) database directory, as
+/// databases are normally run there; the files MDBX creates inherit it.
+/// Other filesystems have no copy-on-write to turn off.
+fn nocow(dir: &Path) -> Result<()> {
+    let fs = Command::new("stat")
+        .args(["-f", "-c", "%T"])
+        .arg(dir)
+        .output()?;
+    if String::from_utf8_lossy(&fs.stdout).trim() != "btrfs" {
+        return Ok(());
+    }
+    let chattr = Command::new("chattr").arg("+C").arg(dir).output();
+    match chattr {
+        Ok(out) if out.status.success() => Ok(()),
+        Ok(out) => bail!(
+            "turning copy-on-write off for {} (btrfs): {}",
+            dir.display(),
+            String::from_utf8_lossy(&out.stderr).trim()
+        ),
+        Err(e) => Err(e).with_context(|| format!("running chattr +C on {} (btrfs)", dir.display())),
+    }
 }
 
 /// A file, or the `.toml` files directly inside a directory, sorted.

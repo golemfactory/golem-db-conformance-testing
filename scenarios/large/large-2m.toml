@@ -1,0 +1,26 @@
+# The large run with small records: 2M created, 1,000 per commit, on disk.
+# Needs ~80 GB free; about 1 h on a fast desktop with NVMe.
+name = "large-2m"
+description = "2M records created, 1,000 per commit; table sizes after each commit"
+seed = 4
+commit_log = "results/large-2m.csv"
+table_log = "results/large-2m-tables.csv"
+# Needs perf (see README, Profiling):
+profile_at = [1, 500, 1000, 1500, 2000]
+
+[database]
+hash = "keccak-256"
+limits = { max_cell_name_len = 32, max_str_len = 64, max_bytes_len = 1024 }
+max_map_size_gib = 256
+
+[shape]
+attributes = [
+    { name = "type", type = "str", cardinality = 20, len = 16 },
+    { name = "owner", type = "u64", cardinality = 10000, distribution = "zipf" },
+    { name = "created", type = "u64", distribution = "unique" },
+]
+fields = [{ name = "payload", type = "bytes", len = 256 }]
+
+[workload]
+kind = "blocks"
+blocks = [{ ops = 1000, repeat = 2000 }]

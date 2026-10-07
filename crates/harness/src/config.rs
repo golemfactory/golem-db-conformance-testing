@@ -18,6 +18,13 @@ pub struct Scenario {
     /// `blocks` only: write one CSV line per commit to this path.
     #[serde(default)]
     pub commit_log: Option<String>,
+    /// `blocks` only: after every commit, write each MDBX table's size to this CSV.
+    #[serde(default)]
+    pub table_log: Option<String>,
+    /// `blocks` only: `perf record` these commits (1-based) to
+    /// `results/profiles/<name>-commit<N>.perf.data`; see scripts/flamegraph.py.
+    #[serde(default)]
+    pub profile_at: Vec<u64>,
     pub workload: Workload,
 }
 

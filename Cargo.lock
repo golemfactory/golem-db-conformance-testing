@@ -387,6 +387,7 @@ dependencies = [
  "anyhow",
  "golemdb-api",
  "hdrhistogram",
+ "libmdbx",
  "rand",
  "rand_chacha",
  "rand_distr",

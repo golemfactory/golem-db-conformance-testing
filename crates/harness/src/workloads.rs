@@ -1,5 +1,6 @@
 use std::collections::HashSet;
 use std::io::Write;
+use std::path::Path;
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
@@ -11,7 +12,9 @@ use rand::Rng;
 use crate::Db;
 use crate::config::{Blocks, Mix, Scenario};
 use crate::generate::{Generator, key};
+use crate::profile;
 use crate::stats::Stats;
+use crate::tables;
 
 pub struct Outcome {
     pub stats: Stats,
@@ -179,15 +182,13 @@ pub fn blocks(db: &Db, scenario: &Scenario, blocks: &[Blocks], mix: &Mix) -> Res
     let mut notes = Vec::new();
     // Only time inside branches counts; generating records is harness work.
     let mut wall = Duration::ZERO;
-    let mut log = match &scenario.commit_log {
-        Some(path) => {
-            let mut file = std::io::BufWriter::new(std::fs::File::create(path)?);
-            writeln!(file, "commit,ops,seal_ms,commit_ms,branch_ms,db_mib")?;
-            Some(file)
-        }
-        None => None,
-    };
-    let db_dir = std::path::Path::new(&scenario.database.path);
+    let mut log = csv(
+        &scenario.commit_log,
+        "commit,ops,seal_ms,commit_ms,branch_ms,db_mib,profiled",
+    )?;
+    let mut table_log = csv(&scenario.table_log, &format!("commit,{}", tables::HEADER))?;
+    let mut last_tables = Vec::new();
+    let db_dir = Path::new(&scenario.database.path);
     let mut commit_no = 0;
     for spec in blocks {
         let mix = spec.mix.as_ref().unwrap_or(mix);
@@ -205,31 +206,69 @@ pub fn blocks(db: &Db, scenario: &Scenario, blocks: &[Blocks], mix: &Mix) -> Res
         let mut size_time = Duration::ZERO;
         for _ in 0..spec.repeat {
             let plan = pool.plan(&mut generator, spec.ops, mix)?;
+            commit_no += 1;
+            // Profiled commits carry perf's overhead: logged and marked, but kept out of the stats.
+            let profiled = scenario.profile_at.contains(&commit_no);
+            let recording = if profiled {
+                Some(profile::start(Path::new(&format!(
+                    "results/profiles/{}-commit{commit_no}.perf.data",
+                    scenario.name
+                )))?)
+            } else {
+                None
+            };
+            let mut unmeasured = Stats::default();
             let block_start = Instant::now();
-            let Some(timing) = run_branch(db, &plan.ops, &mut stats)? else {
+            let Some(timing) = run_branch(
+                db,
+                &plan.ops,
+                if profiled {
+                    &mut unmeasured
+                } else {
+                    &mut stats
+                },
+            )?
+            else {
                 bail!("a single writer lost a commit race");
             };
             let took = block_start.elapsed();
-            commit_no += 1;
+            if let Some(recording) = recording {
+                recording.stop()?;
+            }
             if let Some(file) = &mut log {
                 let ms = |d: Duration| d.as_secs_f64() * 1000.0;
                 writeln!(
                     file,
-                    "{commit_no},{},{:.3},{:.3},{:.3},{:.1}",
+                    "{commit_no},{},{:.3},{:.3},{:.3},{:.1},{}",
                     spec.ops,
                     ms(timing.seal),
                     ms(timing.commit),
                     ms(took),
-                    crate::dir_size(db_dir) as f64 / (1 << 20) as f64
+                    crate::dir_size(db_dir) as f64 / (1 << 20) as f64,
+                    u8::from(profiled)
                 )?;
+                // Flushed every commit, so a long run can be watched and stopped at any point.
+                file.flush()?;
             }
-            wall += took;
-            size_time += took;
-            rates.push(spec.ops as f64 / took.as_secs_f64());
+            if let Some(file) = &mut table_log {
+                last_tables = tables::snapshot(db_dir)?;
+                for line in &last_tables {
+                    writeln!(file, "{commit_no},{line}")?;
+                }
+                file.flush()?;
+            }
             pool.committed(plan);
+            if !profiled {
+                wall += took;
+                size_time += took;
+                rates.push(spec.ops as f64 / took.as_secs_f64());
+            }
+        }
+        if rates.is_empty() {
+            continue; // every block was profiled
         }
         // Total ops over total time: averaging per-block rates would overweight fast blocks.
-        let rate = (spec.ops * spec.repeat) as f64 / size_time.as_secs_f64();
+        let rate = (spec.ops * rates.len()) as f64 / size_time.as_secs_f64();
         // Medians over the first and last 10% of blocks: a single block is too noisy
         // (the first commit after a large one is often unusually fast).
         let tenth = rates.len().div_ceil(10);
@@ -240,7 +279,27 @@ pub fn blocks(db: &Db, scenario: &Scenario, blocks: &[Blocks], mix: &Mix) -> Res
             median(&rates[rates.len() - tenth..])
         ));
     }
+    if !last_tables.is_empty() {
+        // "name,entries,depth,pages,mib" -> "name mib"
+        let sizes: Vec<String> = last_tables
+            .iter()
+            .filter_map(|line| line.split_once(',').zip(line.rsplit_once(',')))
+            .map(|((name, _), (_, mib))| format!("{name} {mib}"))
+            .collect();
+        notes.push(format!("MiB after the last commit: {}", sizes.join(", ")));
+    }
     Ok(Outcome { stats, wall, notes })
+}
+
+/// Opens a CSV log, creating its directory, and writes the header.
+fn csv(path: &Option<String>, header: &str) -> Result<Option<std::io::BufWriter<std::fs::File>>> {
+    let Some(path) = path else { return Ok(None) };
+    if let Some(dir) = Path::new(path).parent() {
+        std::fs::create_dir_all(dir)?;
+    }
+    let mut file = std::io::BufWriter::new(std::fs::File::create(path)?);
+    writeln!(file, "{header}")?;
+    Ok(Some(file))
 }
 
 fn median(values: &[f64]) -> f64 {

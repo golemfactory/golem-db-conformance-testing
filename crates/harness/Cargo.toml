@@ -9,6 +9,8 @@ license.workspace = true
 golemdb-api = { path = "../../golem-db/crates/api", features = ["mdbx"] }
 anyhow = "1"
 hdrhistogram = "7"
+# Same version as golem-db's storage; only reads per-table stats (see tables.rs).
+libmdbx = "=0.6.6"
 rand = "0.9"
 rand_chacha = "0.9"
 rand_distr = "0.5"
