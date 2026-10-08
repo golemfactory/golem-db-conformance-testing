@@ -24,6 +24,9 @@ cargo load scenarios/index-layout        # a directory runs every scenario in it
 cargo load scenarios/block-size
 ```
 
+Each scenario's database goes to its `path` (default `target/load-db`), deleted and recreated first. To put it
+elsewhere for every scenario, e.g. on another disk: `GOLEMDB_DB_DIR=/mnt/fast/load-db cargo load ...`.
+
 ## Scenario format
 
 ```toml

@@ -31,7 +31,13 @@ pub struct Scenario {
 impl Scenario {
     pub fn load(path: &std::path::Path) -> Result<Self> {
         let text = std::fs::read_to_string(path).with_context(|| path.display().to_string())?;
-        toml::from_str(&text).with_context(|| path.display().to_string())
+        let mut scenario: Self =
+            toml::from_str(&text).with_context(|| path.display().to_string())?;
+        // Puts every scenario's database there instead, e.g. on another disk.
+        if let Ok(dir) = std::env::var("GOLEMDB_DB_DIR") {
+            scenario.database.path = dir;
+        }
+        Ok(scenario)
     }
 }
 
