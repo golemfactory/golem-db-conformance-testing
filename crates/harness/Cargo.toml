@@ -6,7 +6,7 @@ rust-version.workspace = true
 license.workspace = true
 
 [dependencies]
-golemdb-api = { path = "../../golem-db/crates/api", features = ["mdbx"] }
+golemdb-api = { path = "../../golem-db/crates/api" }
 anyhow = "1"
 hdrhistogram = "7"
 # Same version as golem-db's storage; only reads per-table stats (see tables.rs).

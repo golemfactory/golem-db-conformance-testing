@@ -6,7 +6,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 use anyhow::{Result, bail};
-use golemdb_api::{ApiError, PatchInput, RecordInput, RecordKey};
+use golemdb_api::{ApiError, RecordKey, RecordOp, op};
 use rand::Rng;
 
 use crate::Db;
@@ -24,9 +24,9 @@ pub struct Outcome {
 }
 
 enum Op {
-    Create(RecordKey, RecordInput),
-    Patch(RecordKey, PatchInput),
-    Delete(RecordKey),
+    Create(RecordOp<op::Create>),
+    Patch(RecordOp<op::Patch>),
+    Delete(RecordOp<op::Delete>),
 }
 
 /// Seal and commit time of one committed branch.
@@ -47,15 +47,18 @@ fn run_branch(db: &Db, ops: &[Op], stats: &mut Stats) -> Result<Option<Timing>> 
     for op in ops {
         // Clone outside the timer: only the engine call is measured.
         let result = match op {
-            Op::Create(key, input) => {
-                let input = input.clone();
-                stats.time("create", || db.create(branch, *key, input).map(drop))
+            Op::Create(op) => {
+                let op = op.clone();
+                stats.time("create", || db.create(branch, op).map(drop))
             }
-            Op::Patch(key, input) => {
-                let input = input.clone();
-                stats.time("patch", || db.patch(branch, *key, input))
+            Op::Patch(op) => {
+                let op = op.clone();
+                stats.time("patch", || db.patch(branch, op))
             }
-            Op::Delete(key) => stats.time("delete", || db.delete(branch, *key)),
+            Op::Delete(op) => {
+                let op = op.clone();
+                stats.time("delete", || db.delete(branch, op))
+            }
         };
         match result {
             Ok(()) => {}
@@ -131,17 +134,17 @@ impl Pool {
                 .filter(|i| used.insert(*i));
             plan.ops.push(match target {
                 Some(i) if roll < mix.create + mix.patch => {
-                    Op::Patch(self.live[i], generator.patch()?)
+                    Op::Patch(generator.patch(self.live[i])?)
                 }
                 Some(i) => {
                     plan.deleted.push(i);
-                    Op::Delete(self.live[i])
+                    Op::Delete(RecordOp::delete(self.live[i]))
                 }
                 None => {
                     let k = key(self.seed, self.stream, self.next);
                     self.next += 1;
                     plan.created.push(k);
-                    Op::Create(k, generator.record()?)
+                    Op::Create(generator.record(k)?)
                 }
             });
         }

@@ -1,7 +1,7 @@
 //! Deterministic keys and records: same seed and stream, same operations.
 
 use anyhow::Result;
-use golemdb_api::{CellValue, PatchInput, RecordInput, RecordKey};
+use golemdb_api::{CellValue, RecordKey, RecordOp, op};
 use rand::{Rng, SeedableRng};
 use rand_chacha::ChaCha8Rng;
 use rand_distr::Zipf;
@@ -65,30 +65,30 @@ impl Generator {
         &mut self.rng
     }
 
-    pub fn record(&mut self) -> Result<RecordInput> {
-        let mut input = RecordInput::new();
+    pub fn record(&mut self, key: RecordKey) -> Result<RecordOp<op::Create>> {
+        let mut op = RecordOp::create(key);
         for i in 0..self.cells.len() {
             let value = self.value(i);
             let cell = &self.cells[i];
-            input = if cell.attribute {
-                input.attribute(&cell.name, value)?
+            op = if cell.attribute {
+                op.attribute(&cell.name, value)?
             } else {
-                input.field(&cell.name, value)?
+                op.field(&cell.name, value)?
             };
         }
-        Ok(input)
+        Ok(op)
     }
 
     /// New value for one random cell.
-    pub fn patch(&mut self) -> Result<PatchInput> {
+    pub fn patch(&mut self, key: RecordKey) -> Result<RecordOp<op::Patch>> {
         let i = self.rng.random_range(0..self.cells.len());
         let value = self.value(i);
         let cell = &self.cells[i];
-        let input = PatchInput::new();
+        let op = RecordOp::patch(key);
         Ok(if cell.attribute {
-            input.attribute(&cell.name, value)?
+            op.attribute(&cell.name, value)?
         } else {
-            input.field(&cell.name, value)?
+            op.field(&cell.name, value)?
         })
     }
 

@@ -14,7 +14,7 @@ use std::time::Duration;
 
 use anyhow::{Context, Result, bail};
 use config::{Scenario, Workload};
-use golemdb_api::{Api, GenesisConfig, GolemDb, MdbxOptions, OpenConfig};
+use golemdb_api::{Api, Database, Genesis, MdbxOptions, OpenConfig};
 
 pub type Db = Arc<dyn Api + Send + Sync>;
 
@@ -62,15 +62,15 @@ fn run(scenario: &Scenario) -> Result<String> {
     let _ = std::fs::remove_dir_all(dir);
     std::fs::create_dir_all(dir)?;
     nocow(dir)?;
-    let config = OpenConfig::new(GenesisConfig {
-        hash_function: scenario.database.hash,
-        cell_limits: scenario.database.limits,
-    });
+    let config = OpenConfig::new(Genesis::new(
+        scenario.database.hash,
+        scenario.database.limits,
+    ));
     let options = MdbxOptions {
         max_map_size: (scenario.database.max_map_size_gib << 30) as usize,
         ..Default::default()
     };
-    let db: Db = Arc::new(GolemDb::open_with_options(dir, &config, options)?);
+    let db: Db = Arc::new(Database::open_with_options(dir, &config, options)?);
 
     println!("{}", scenario.name);
     if !scenario.description.is_empty() {

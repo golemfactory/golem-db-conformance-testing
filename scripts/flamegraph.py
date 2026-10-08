@@ -28,7 +28,8 @@ def clean(frames):
     for f in frames:
         if "core::ops::try_trait::Try>::branch" in f:
             continue
-        out.append(re.sub(r"^<golemdb_api::database::Engine<.*> as golemdb_api::Api>::", "golemdb_api::Api::", f))
+        # `<golemdb_api::database::Inner<...> as golemdb_api::Api>::seal`, whatever the implementing type.
+        out.append(re.sub(r"^<golemdb_api::.* as golemdb_api::Api>::", "golemdb_api::Api::", f))
     return out
 
 

@@ -354,6 +354,7 @@ dependencies = [
  "golemdb-merkle",
  "golemdb-record",
  "golemdb-storage",
+ "golemdb-storage-mdbx",
  "serde",
  "serde-saphyr",
  "thiserror 1.0.69",
@@ -432,7 +433,12 @@ dependencies = [
 [[package]]
 name = "golemdb-storage"
 version = "0.1.0"
+
+[[package]]
+name = "golemdb-storage-mdbx"
+version = "0.1.0"
 dependencies = [
+ "golemdb-storage",
  "libmdbx",
  "mdbx-sys",
 ]
