@@ -47,6 +47,7 @@ attributes = [                  # indexed
     { name = "tag", type = "u64", repeat = 10, distribution = "unique" },  # tag_0..tag_9
 ]
 fields = [{ name = "payload", type = "bytes", len = 256 }]                 # not indexed
+# patch_all_cells = true        # patches rewrite every non-unique cell, not one random cell
 
 [workload]
 kind = "blocks"                 # one writer, blocks of these sizes in order
@@ -56,6 +57,7 @@ mix = { create = 4, patch = 1, delete = 0 }
 # A block group can also take its own `mix`, and `warmup = true` to run it unmeasured.
 # commit_log = "results/x.csv"  # top level: one CSV line per commit (blocks only)
 # table_log = "results/y.csv"   # top level: every MDBX table's size after each commit (blocks only)
+# table_log_every = 100         # top level: ... or only every N commits
 # profile_at = [1, 100]         # top level: perf-record these commits (blocks only), see Profiling
 
 # kind = "writers"              # N writers racing to commit; losers retry
@@ -69,7 +71,12 @@ mix = { create = 4, patch = 1, delete = 0 }
 - `type`: `u64`, `str` or `bytes`. `bytes` is for fields only.
 - `cardinality`: the number of distinct values. `1` means every record has the same value.
 - `distribution`: `uniform` (the default), `zipf` (a few hot values), or `unique` (never repeats).
-- `len`: the size of `str` and `bytes` values.
+- `len`: the size of `str` and `bytes` values. Either a number, or weighted ranges drawn uniformly, e.g.
+  `[{ min = 1024, max = 4096, weight = 90 }, { min = 4096, max = 102400, weight = 10 }]`.
+
+**`commit_log`** columns: `commit`, `ops`, `bytes` (the cell values written plus 32 bytes of key per
+operation), `seal_ms`, `commit_ms`, `branch_ms` (the whole begin-to-commit), `db_mib` (database files after
+the commit) and `profiled` (1 if perf recorded it).
 
 **`table_log`** reads MDBX's own statistics after every commit: entries, B-tree depth, pages and MiB for each
 table (`Cell`, `CellTrie`, `Index`, ...), plus the file space outside the tables: `free` (pages released by

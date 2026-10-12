@@ -1,4 +1,4 @@
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, bail};
 use golemdb_api::{CellLimits, HashAlgorithm};
 use serde::Deserialize;
 
@@ -21,6 +21,9 @@ pub struct Scenario {
     /// `blocks` only: after every commit, write each MDBX table's size to this CSV.
     #[serde(default)]
     pub table_log: Option<String>,
+    /// Write `table_log` only every N commits (each read costs a process and a scan).
+    #[serde(default = "one_u64")]
+    pub table_log_every: u64,
     /// `blocks` only: `perf record` these commits (1-based) to
     /// `results/profiles/<name>-commit<N>.perf.data`; see scripts/flamegraph.py.
     #[serde(default)]
@@ -36,6 +39,26 @@ impl Scenario {
         // Puts every scenario's database there instead, e.g. on another disk.
         if let Ok(dir) = std::env::var("GOLEMDB_DB_DIR") {
             scenario.database.path = dir;
+        }
+        if scenario.table_log_every == 0 {
+            bail!("{}: `table_log_every` must be at least 1", path.display());
+        }
+        for cell in scenario
+            .shape
+            .attributes
+            .iter()
+            .chain(&scenario.shape.fields)
+        {
+            if let Len::Ranges(ranges) = &cell.len
+                && (ranges.iter().map(|r| r.weight).sum::<u32>() == 0
+                    || ranges.iter().any(|r| r.min > r.max))
+            {
+                bail!(
+                    "{}: `{}`: `len` ranges need min <= max and some weight",
+                    path.display(),
+                    cell.name
+                );
+            }
         }
         Ok(scenario)
     }
@@ -70,6 +93,10 @@ pub struct Shape {
     /// Unindexed cells.
     #[serde(default)]
     pub fields: Vec<Cell>,
+    /// Patches rewrite every cell except `unique` ones (an entity's ids stay),
+    /// like Arkiv's update; otherwise a patch sets one random cell.
+    #[serde(default)]
+    pub patch_all_cells: bool,
 }
 
 #[derive(Deserialize)]
@@ -83,9 +110,9 @@ pub struct Cell {
     pub cardinality: u64,
     #[serde(default)]
     pub distribution: Distribution,
-    /// Byte length for `str` and `bytes`.
+    /// Byte length for `str` and `bytes`: a number, or weighted ranges (see `Len`).
     #[serde(default = "default_len")]
-    pub len: usize,
+    pub len: Len,
     /// Expands into `name_0 .. name_{repeat-1}`.
     #[serde(default = "one")]
     pub repeat: usize,
@@ -94,8 +121,25 @@ pub struct Cell {
 fn default_cardinality() -> u64 {
     1000
 }
-fn default_len() -> usize {
-    32
+fn default_len() -> Len {
+    Len::Fixed(32)
+}
+
+/// A fixed length, or weighted ranges drawn uniformly, e.g.
+/// `[{ min = 1024, max = 4096, weight = 90 }, { min = 4096, max = 102400, weight = 10 }]`.
+#[derive(Deserialize, Clone)]
+#[serde(untagged)]
+pub enum Len {
+    Fixed(usize),
+    Ranges(Vec<LenRange>),
+}
+
+#[derive(Deserialize, Clone)]
+#[serde(deny_unknown_fields)]
+pub struct LenRange {
+    pub min: usize,
+    pub max: usize,
+    pub weight: u32,
 }
 fn one() -> usize {
     1
@@ -169,6 +213,9 @@ pub struct Mix {
 }
 
 fn one_u32() -> u32 {
+    1
+}
+fn one_u64() -> u64 {
     1
 }
 

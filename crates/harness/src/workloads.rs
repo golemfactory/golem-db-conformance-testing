@@ -104,6 +104,8 @@ struct Pool {
 
 struct Plan {
     ops: Vec<Op>,
+    /// Cell values plus a 32-byte key per operation.
+    bytes: usize,
     created: Vec<RecordKey>,
     deleted: Vec<usize>,
 }
@@ -121,8 +123,10 @@ impl Pool {
     fn plan(&mut self, generator: &mut Generator, n: usize, mix: &Mix) -> Result<Plan> {
         let total = mix.create + mix.patch + mix.delete;
         let mut used = HashSet::new();
+        generator.take_bytes();
         let mut plan = Plan {
             ops: Vec::with_capacity(n),
+            bytes: 0,
             created: Vec::new(),
             deleted: Vec::new(),
         };
@@ -148,6 +152,7 @@ impl Pool {
                 }
             });
         }
+        plan.bytes = generator.take_bytes() + 32 * plan.ops.len();
         Ok(plan)
     }
 
@@ -187,10 +192,9 @@ pub fn blocks(db: &Db, scenario: &Scenario, blocks: &[Blocks], mix: &Mix) -> Res
     let mut wall = Duration::ZERO;
     let mut log = csv(
         &scenario.commit_log,
-        "commit,ops,seal_ms,commit_ms,branch_ms,db_mib,profiled",
+        "commit,ops,bytes,seal_ms,commit_ms,branch_ms,db_mib,profiled",
     )?;
     let mut table_log = csv(&scenario.table_log, &format!("commit,{}", tables::HEADER))?;
-    let mut last_tables = Vec::new();
     let db_dir = Path::new(&scenario.database.path);
     let mut commit_no = 0;
     for spec in blocks {
@@ -242,8 +246,9 @@ pub fn blocks(db: &Db, scenario: &Scenario, blocks: &[Blocks], mix: &Mix) -> Res
                 let ms = |d: Duration| d.as_secs_f64() * 1000.0;
                 writeln!(
                     file,
-                    "{commit_no},{},{:.3},{:.3},{:.3},{:.1},{}",
+                    "{commit_no},{},{},{:.3},{:.3},{:.3},{:.1},{}",
                     spec.ops,
+                    plan.bytes,
                     ms(timing.seal),
                     ms(timing.commit),
                     ms(took),
@@ -253,9 +258,10 @@ pub fn blocks(db: &Db, scenario: &Scenario, blocks: &[Blocks], mix: &Mix) -> Res
                 // Flushed every commit, so a long run can be watched and stopped at any point.
                 file.flush()?;
             }
-            if let Some(file) = &mut table_log {
-                last_tables = tables::snapshot(db_dir)?;
-                for line in &last_tables {
+            if let Some(file) = &mut table_log
+                && commit_no % scenario.table_log_every == 0
+            {
+                for line in tables::snapshot(db_dir)? {
                     writeln!(file, "{commit_no},{line}")?;
                 }
                 file.flush()?;
@@ -282,9 +288,9 @@ pub fn blocks(db: &Db, scenario: &Scenario, blocks: &[Blocks], mix: &Mix) -> Res
             median(&rates[rates.len() - tenth..])
         ));
     }
-    if !last_tables.is_empty() {
-        // "name,entries,depth,pages,mib" -> "name mib"
-        let sizes: Vec<String> = last_tables
+    if table_log.is_some() {
+        // "name,entries,depth,pages,mib" -> "name mib"; taken now, as `table_log_every` may skip the last commit.
+        let sizes: Vec<String> = tables::snapshot(db_dir)?
             .iter()
             .filter_map(|line| line.split_once(',').zip(line.rsplit_once(',')))
             .map(|((name, _), (_, mib))| format!("{name} {mib}"))

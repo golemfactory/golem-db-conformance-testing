@@ -6,13 +6,16 @@ use rand::{Rng, SeedableRng};
 use rand_chacha::ChaCha8Rng;
 use rand_distr::Zipf;
 
-use crate::config::{Distribution, Shape, Type};
+use crate::config::{Distribution, Len, Shape, Type};
 
 pub struct Generator {
     cells: Vec<Cell>,
+    patch_all_cells: bool,
     rng: ChaCha8Rng,
     stream: u64,
     unique: u64,
+    /// Value bytes generated since the last `take_bytes`.
+    bytes: usize,
 }
 
 struct Cell {
@@ -22,7 +25,7 @@ struct Cell {
     cardinality: u64,
     zipf: Option<Zipf<f64>>,
     distribution: Distribution,
-    len: usize,
+    len: Len,
 }
 
 impl Generator {
@@ -48,21 +51,28 @@ impl Generator {
                         cardinality: spec.cardinality,
                         zipf,
                         distribution: spec.distribution,
-                        len: spec.len,
+                        len: spec.len.clone(),
                     });
                 }
             }
         }
         Ok(Self {
             cells,
+            patch_all_cells: shape.patch_all_cells,
             rng: ChaCha8Rng::seed_from_u64(mix(seed) ^ stream),
             stream,
             unique: 0,
+            bytes: 0,
         })
     }
 
     pub fn rng(&mut self) -> &mut ChaCha8Rng {
         &mut self.rng
+    }
+
+    /// Value bytes generated since the last call.
+    pub fn take_bytes(&mut self) -> usize {
+        std::mem::take(&mut self.bytes)
     }
 
     pub fn record(&mut self, key: RecordKey) -> Result<RecordOp<op::Create>> {
@@ -79,21 +89,47 @@ impl Generator {
         Ok(op)
     }
 
-    /// New value for one random cell.
+    /// New values for every cell except `unique` ones (`patch_all_cells`), or for one random cell.
     pub fn patch(&mut self, key: RecordKey) -> Result<RecordOp<op::Patch>> {
-        let i = self.rng.random_range(0..self.cells.len());
-        let value = self.value(i);
-        let cell = &self.cells[i];
-        let op = RecordOp::patch(key);
-        Ok(if cell.attribute {
-            op.attribute(&cell.name, value)?
+        let cells: Vec<usize> = if self.patch_all_cells {
+            (0..self.cells.len())
+                .filter(|&i| self.cells[i].distribution != Distribution::Unique)
+                .collect()
         } else {
-            op.field(&cell.name, value)?
-        })
+            vec![self.rng.random_range(0..self.cells.len())]
+        };
+        let mut op = RecordOp::patch(key);
+        for i in cells {
+            let value = self.value(i);
+            let cell = &self.cells[i];
+            op = if cell.attribute {
+                op.attribute(&cell.name, value)?
+            } else {
+                op.field(&cell.name, value)?
+            };
+        }
+        Ok(op)
     }
 
     fn value(&mut self, i: usize) -> CellValue {
         let cell = &self.cells[i];
+        let len = match &cell.len {
+            Len::Fixed(len) => *len,
+            Len::Ranges(ranges) => {
+                let mut roll = self
+                    .rng
+                    .random_range(0..ranges.iter().map(|r| r.weight).sum());
+                let range = ranges
+                    .iter()
+                    .find(|r| {
+                        let hit = roll < r.weight;
+                        roll = roll.saturating_sub(r.weight);
+                        hit
+                    })
+                    .expect("roll < total weight");
+                self.rng.random_range(range.min..=range.max)
+            }
+        };
         let n = match (cell.distribution, &cell.zipf) {
             (Distribution::Uniform, _) => self.rng.random_range(0..cell.cardinality),
             (Distribution::Zipf, Some(zipf)) => self.rng.sample(zipf) as u64 - 1,
@@ -102,11 +138,12 @@ impl Generator {
                 (self.stream << 40) | self.unique
             }
         };
+        self.bytes += if cell.ty == Type::U64 { 8 } else { len };
         match cell.ty {
             Type::U64 => CellValue::from_u64(n),
-            Type::Str => CellValue::from_str(&format!("{n:0>width$x}", width = cell.len)),
+            Type::Str => CellValue::from_str(&format!("{n:0>len$x}")),
             Type::Bytes => {
-                let mut bytes = vec![0u8; cell.len];
+                let mut bytes = vec![0u8; len];
                 self.rng.fill(&mut bytes[..]);
                 CellValue::from_bytes(&bytes)
             }
