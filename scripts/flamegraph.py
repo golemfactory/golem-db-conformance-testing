@@ -35,13 +35,25 @@ def clean(frames):
 
 def main(data, commit_log, commit, svg=None):
     svg = svg or data.removesuffix(".perf.data") + ".svg"
-    script = subprocess.run(["perf", "script", "-i", data], capture_output=True, check=True).stdout
+    # --no-inline: perf versions that add inlined frames name them differently ("main", not
+    # "golemdb_harness::main"), and the thread and call matching below would miss them.
+    script = subprocess.run(["perf", "script", "--no-inline", "-i", data], capture_output=True, check=True).stdout
     collapsed = subprocess.run(["inferno-collapse-perf"], input=script, capture_output=True, check=True).stdout.decode()
 
+    lines = [(line.rsplit(" ", 1)[0].split(";"), int(line.rsplit(" ", 1)[1]) / 1e6) for line in collapsed.splitlines()]
+    # The harness frames above the seal and commit calls, as this build's stacks have them (inlining
+    # varies), so the writer thread's samples and the [waiting] bars land under the same call bars.
+    callers = Counter()
+    for frames, ms in lines:
+        if "golemdb_harness::main" in frames:
+            path = ["harness"] + clean(frames[frames.index("golemdb_harness::main") + 1 :])
+            api = next((i for i, f in enumerate(path) if f in ("golemdb_api::Api::seal", "golemdb_api::Api::commit")), None)
+            if api:
+                callers[";".join(path[:api])] += ms
+    run = callers.most_common(1)[0][0] if callers else RUN
+
     stacks, cpu = Counter(), Counter()
-    for line in collapsed.splitlines():
-        stack, n = line.rsplit(" ", 1)
-        frames, ms = stack.split(";"), int(n) / 1e6
+    for frames, ms in lines:
         if "golemdb_harness::main" in frames:
             path = ["harness"] + clean(frames[frames.index("golemdb_harness::main") + 1 :])
         else:
@@ -52,7 +64,7 @@ def main(data, commit_log, commit, svg=None):
                 rest = frames[spawn[-1] + 1 :]
                 start = next((i for i, f in enumerate(rest) if "mdbx_txn" in f), 0)
                 call = "begin" if any("mdbx_txn_begin" in f for f in rest) else "commit"
-                path = RUN.split(";") + [f"golemdb_api::Api::{call}", "[libmdbx writer thread]"] + clean(rest[start:])
+                path = run.split(";") + [f"golemdb_api::Api::{call}", "[libmdbx writer thread]"] + clean(rest[start:])
         for call in ("seal", "commit"):
             if f"golemdb_api::Api::{call}" in path:
                 cpu[call] += ms
@@ -62,7 +74,7 @@ def main(data, commit_log, commit, svg=None):
     for call in ("seal", "commit"):
         waiting = float(row[f"{call}_ms"]) - cpu[call]
         if waiting > 0.02 * float(row["branch_ms"]):
-            stacks[f"{RUN};golemdb_api::Api::{call};[waiting: off CPU, wall time minus sampled CPU]"] += waiting
+            stacks[f"{run};golemdb_api::Api::{call};[waiting: off CPU, wall time minus sampled CPU]"] += waiting
 
     folded = "".join(f"{k} {round(v * 1000)}\n" for k, v in stacks.items())  # microseconds
     title = f"Commit {commit}: {row['ops']} writes, database {float(row['db_mib']):,.0f} MiB after it"
