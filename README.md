@@ -76,7 +76,8 @@ mix = { create = 4, patch = 1, delete = 0 }
 
 **`commit_log`** columns: `commit`, `ops`, `bytes` (the cell values written plus 32 bytes of key per
 operation), `seal_ms`, `commit_ms`, `branch_ms` (the whole begin-to-commit), `db_mib` (database files after
-the commit) and `profiled` (1 if perf recorded it).
+the commit), `profiled` (1 if perf recorded it), and `state_root` and `index_root` (hex, as seal returned them;
+equal between two runs only if they stored the same state).
 
 **`table_log`** reads MDBX's own statistics after every commit: entries, B-tree depth, pages and MiB for each
 table (`Cell`, `CellTrie`, `Index`, ...), plus the file space outside the tables: `free` (pages released by

@@ -6,7 +6,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 use anyhow::{Result, bail};
-use golemdb_api::{ApiError, RecordKey, RecordOp, op};
+use golemdb_api::{ApiError, RecordKey, RecordOp, SealInfo, op};
 use rand::Rng;
 
 use crate::Db;
@@ -29,10 +29,11 @@ enum Op {
     Delete(RecordOp<op::Delete>),
 }
 
-/// Seal and commit time of one committed branch.
+/// Seal and commit time of one committed branch, and the roots seal computed.
 struct Timing {
     seal: Duration,
     commit: Duration,
+    sealed: SealInfo,
 }
 
 /// begin → ops → seal → commit, timing each call. Returns `None` if another
@@ -70,11 +71,11 @@ fn run_branch(db: &Db, ops: &[Op], stats: &mut Stats) -> Result<Option<Timing>> 
     let sealed = db.seal(branch);
     let seal = start.elapsed();
     stats.record("seal", seal);
-    match sealed {
-        Ok(_) => {}
+    let sealed = match sealed {
+        Ok(sealed) => sealed,
         Err(ApiError::HandleInvalid | ApiError::Conflict) => return lost(stats),
         Err(e) => return Err(e.into()),
-    }
+    };
     // A losing commit waits behind the winner, so it is timed separately.
     let start = Instant::now();
     let commit = match db.commit(branch) {
@@ -91,7 +92,11 @@ fn run_branch(db: &Db, ops: &[Op], stats: &mut Stats) -> Result<Option<Timing>> 
     };
     stats.count("commits", 1);
     stats.count("ops", ops.len() as u64);
-    Ok(Some(Timing { seal, commit }))
+    Ok(Some(Timing {
+        seal,
+        commit,
+        sealed,
+    }))
 }
 
 /// Keys one writer has committed, so it can patch and delete its own records.
@@ -192,7 +197,7 @@ pub fn blocks(db: &Db, scenario: &Scenario, blocks: &[Blocks], mix: &Mix) -> Res
     let mut wall = Duration::ZERO;
     let mut log = csv(
         &scenario.commit_log,
-        "commit,ops,bytes,seal_ms,commit_ms,branch_ms,db_mib,profiled",
+        "commit,ops,bytes,seal_ms,commit_ms,branch_ms,db_mib,profiled,state_root,index_root",
     )?;
     let mut table_log = csv(&scenario.table_log, &format!("commit,{}", tables::HEADER))?;
     let db_dir = Path::new(&scenario.database.path);
@@ -246,14 +251,16 @@ pub fn blocks(db: &Db, scenario: &Scenario, blocks: &[Blocks], mix: &Mix) -> Res
                 let ms = |d: Duration| d.as_secs_f64() * 1000.0;
                 writeln!(
                     file,
-                    "{commit_no},{},{},{:.3},{:.3},{:.3},{:.1},{}",
+                    "{commit_no},{},{},{:.3},{:.3},{:.3},{:.1},{},{},{}",
                     spec.ops,
                     plan.bytes,
                     ms(timing.seal),
                     ms(timing.commit),
                     ms(took),
                     crate::dir_size(db_dir) as f64 / (1 << 20) as f64,
-                    u8::from(profiled)
+                    u8::from(profiled),
+                    hex(&timing.sealed.state_root),
+                    hex(&timing.sealed.index_root)
                 )?;
                 // Flushed every commit, so a long run can be watched and stopped at any point.
                 file.flush()?;
@@ -382,4 +389,8 @@ pub fn writers(
         wall: start.elapsed(),
         notes,
     })
+}
+
+fn hex(bytes: &[u8]) -> String {
+    bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
