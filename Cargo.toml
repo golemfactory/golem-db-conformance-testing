@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/harness"]
+members = ["crates/harness", "crates/conformance"]
 # golem-db is its own workspace; keep cargo from adopting it as a member.
 exclude = ["golem-db"]
 

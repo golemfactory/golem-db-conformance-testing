@@ -1,7 +1,7 @@
 # golemdb-conformance-testing
 
-Load tests for [Golem DB](https://github.com/golemfactory/golem-db), run through its
-public API (`golemdb-api`). `golem-db/` is a submodule on `feature/golem-db-api`.
+Conformance and load tests for [Golem DB](https://github.com/golemfactory/golem-db), run through its
+public API (`golemdb-api`). `golem-db/` is a submodule on `main`.
 
 ## Setup
 
@@ -17,7 +17,17 @@ git clone --recurse-submodules <this repo>     # or, in an existing clone: git s
     (resets on reboot);
   - for flamegraphs, Python 3 and `cargo install inferno`.
 
-## Running
+## Conformance tests
+
+`crates/conformance` checks golem-db against its API spec (`golem-db/docs/golemdb-api.md`), through the
+public `Api` only: one module per spec section, each test quoting the statement it checks.
+
+```sh
+cargo test -p golemdb-conformance                 # what main implements
+cargo test -p golemdb-conformance -- --ignored    # spec-gap tests: what the spec states and main does not do yet
+```
+
+## Running load tests
 
 ```sh
 cargo load scenarios/index-layout        # a directory runs every scenario in it, then prints a comparison
