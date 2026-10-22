@@ -6,7 +6,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 use anyhow::{Result, bail};
-use golemdb_api::{ApiError, RecordKey, RecordOp, SealInfo, op};
+use golemdb_api::{ApiError, Budget, RecordKey, RecordOp, SealInfo, op};
 use rand::Rng;
 
 use crate::Db;
@@ -50,15 +50,15 @@ fn run_branch(db: &Db, ops: &[Op], stats: &mut Stats) -> Result<Option<Timing>> 
         let result = match op {
             Op::Create(op) => {
                 let op = op.clone();
-                stats.time("create", || db.create(branch, op).map(drop))
+                stats.time("create", || db.create(branch, op).into_result().map(drop))
             }
             Op::Patch(op) => {
                 let op = op.clone();
-                stats.time("patch", || db.patch(branch, op))
+                stats.time("patch", || db.patch(branch, op).into_result())
             }
             Op::Delete(op) => {
                 let op = op.clone();
-                stats.time("delete", || db.delete(branch, op))
+                stats.time("delete", || db.delete(branch, op).into_result())
             }
         };
         match result {
@@ -143,17 +143,17 @@ impl Pool {
                 .filter(|i| used.insert(*i));
             plan.ops.push(match target {
                 Some(i) if roll < mix.create + mix.patch => {
-                    Op::Patch(generator.patch(self.live[i])?)
+                    Op::Patch(generator.patch(self.live[i]))
                 }
                 Some(i) => {
                     plan.deleted.push(i);
-                    Op::Delete(RecordOp::delete(self.live[i]))
+                    Op::Delete(RecordOp::delete(self.live[i], Budget::Unlimited))
                 }
                 None => {
                     let k = key(self.seed, self.stream, self.next);
                     self.next += 1;
                     plan.created.push(k);
-                    Op::Create(generator.record(k)?)
+                    Op::Create(generator.record(k))
                 }
             });
         }

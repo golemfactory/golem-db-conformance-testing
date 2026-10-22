@@ -1,7 +1,7 @@
 //! Deterministic keys and records: same seed and stream, same operations.
 
 use anyhow::Result;
-use golemdb_api::{CellValue, RecordKey, RecordOp, op};
+use golemdb_api::{Budget, CellValue, RecordKey, RecordOp, op};
 use rand::{Rng, SeedableRng};
 use rand_chacha::ChaCha8Rng;
 use rand_distr::Zipf;
@@ -75,22 +75,22 @@ impl Generator {
         std::mem::take(&mut self.bytes)
     }
 
-    pub fn record(&mut self, key: RecordKey) -> Result<RecordOp<op::Create>> {
-        let mut op = RecordOp::create(key);
+    pub fn record(&mut self, key: RecordKey) -> RecordOp<op::Create> {
+        let mut op = RecordOp::create(key, Budget::Unlimited);
         for i in 0..self.cells.len() {
             let value = self.value(i);
             let cell = &self.cells[i];
             op = if cell.attribute {
-                op.attribute(&cell.name, value)?
+                op.attribute(&cell.name, value)
             } else {
-                op.field(&cell.name, value)?
+                op.field(&cell.name, value)
             };
         }
-        Ok(op)
+        op
     }
 
     /// New values for every cell except `unique` ones (`patch_all_cells`), or for one random cell.
-    pub fn patch(&mut self, key: RecordKey) -> Result<RecordOp<op::Patch>> {
+    pub fn patch(&mut self, key: RecordKey) -> RecordOp<op::Patch> {
         let cells: Vec<usize> = if self.patch_all_cells {
             (0..self.cells.len())
                 .filter(|&i| self.cells[i].distribution != Distribution::Unique)
@@ -98,17 +98,17 @@ impl Generator {
         } else {
             vec![self.rng.random_range(0..self.cells.len())]
         };
-        let mut op = RecordOp::patch(key);
+        let mut op = RecordOp::patch(key, Budget::Unlimited);
         for i in cells {
             let value = self.value(i);
             let cell = &self.cells[i];
             op = if cell.attribute {
-                op.attribute(&cell.name, value)?
+                op.attribute(&cell.name, value)
             } else {
-                op.field(&cell.name, value)?
+                op.field(&cell.name, value)
             };
         }
-        Ok(op)
+        op
     }
 
     fn value(&mut self, i: usize) -> CellValue {

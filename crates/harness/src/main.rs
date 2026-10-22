@@ -65,6 +65,7 @@ fn run(scenario: &Scenario) -> Result<String> {
     let config = OpenConfig::new(Genesis::new(
         scenario.database.hash,
         scenario.database.limits,
+        None,
     ));
     let options = MdbxOptions {
         max_map_size: (scenario.database.max_map_size_gib << 30) as usize,
