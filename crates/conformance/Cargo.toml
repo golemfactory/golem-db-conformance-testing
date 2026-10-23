@@ -10,6 +10,9 @@ golemdb-api = { path = "../../golem-db/crates/api" }
 tempfile = "3"
 
 [dev-dependencies]
+proptest = "1"
+# The oracle: an independent engine holding the expected state (tests/oracle).
+rusqlite = { version = "0.40", features = ["bundled", "backup"] }
 # Independent implementations of the two hash functions, to compute spec values.
 blake3 = "1"
 sha3 = "0.10"

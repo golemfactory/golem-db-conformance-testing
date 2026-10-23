@@ -27,6 +27,11 @@ cargo test -p golemdb-conformance                 # what main implements
 cargo test -p golemdb-conformance -- --ignored    # spec-gap tests: what the spec states and main does not do yet
 ```
 
+`tests/oracle` runs random operation sequences against golem-db and against an SQLite mirror of what the
+spec says the state and answers must be (`tests/oracle/mirror.rs`), comparing every result, error, receipt and the whole
+state after each step. `PROPTEST_CASES=2000 cargo test -p golemdb-conformance --test oracle` runs more sequences
+(default 64); a failure is shrunk to a minimal sequence and its seed saved under `tests/proptest-regressions/`.
+
 ## Running load tests
 
 ```sh
