@@ -11,7 +11,7 @@ fn message(error: ApiError) -> String {
     }
 }
 
-fn setup() -> (Database, BranchId) {
+fn setup() -> (TestDb, BranchId) {
     let db = db();
     commit_create(
         &db,

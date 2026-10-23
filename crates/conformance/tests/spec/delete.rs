@@ -2,7 +2,7 @@
 
 use golemdb_conformance::*;
 
-fn setup() -> Database {
+fn setup() -> TestDb {
     let db = db();
     commit_create(
         &db,

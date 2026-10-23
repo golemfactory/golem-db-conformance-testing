@@ -21,8 +21,33 @@ pub fn genesis() -> Genesis {
     Genesis::new(HashAlgorithm::Keccak256, LIMITS, None)
 }
 
-pub fn db() -> Database {
-    Database::open_memory(&genesis()).expect("open in-memory database")
+/// A fresh database on MDBX, the store hosts run on, in its own temporary
+/// directory. Derefs to `Database`; the directory is removed after the database
+/// is dropped.
+pub struct TestDb {
+    db: Database,
+    _dir: tempfile::TempDir,
+}
+
+impl std::ops::Deref for TestDb {
+    type Target = Database;
+    fn deref(&self) -> &Database {
+        &self.db
+    }
+}
+
+pub fn open_db(genesis: &Genesis) -> TestDb {
+    let dir = tempfile::tempdir().expect("temporary directory");
+    let db = Database::open(
+        dir.path(),
+        &OpenConfig::new(genesis.clone()).with_mode(OpenMode::CreateNew),
+    )
+    .expect("open MDBX database");
+    TestDb { db, _dir: dir }
+}
+
+pub fn db() -> TestDb {
+    open_db(&genesis())
 }
 
 /// A user record key. Never equal to a reserved key, which is ASCII zero-padded.

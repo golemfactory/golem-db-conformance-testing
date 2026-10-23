@@ -427,7 +427,9 @@ dependencies = [
 name = "golemdb-conformance"
 version = "0.1.0"
 dependencies = [
+ "blake3",
  "golemdb-api",
+ "sha3",
  "tempfile",
 ]
 

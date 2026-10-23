@@ -67,7 +67,7 @@ fn matches(db: &Database, filter: Filter) -> Vec<u8> {
 }
 
 /// Seven records, created in key order in one commit, so record ID order is key order.
-fn dataset() -> Database {
+fn dataset() -> TestDb {
     let db = db();
     let s = CellValue::from_str;
     let records: Vec<RecordOp<op::Create>> = vec![

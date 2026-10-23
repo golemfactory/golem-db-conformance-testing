@@ -23,7 +23,7 @@ fn set_x(db: &Database, b: BranchId, v: u32) {
     .ok();
 }
 
-fn setup() -> (Database, BranchId) {
+fn setup() -> (TestDb, BranchId) {
     let db = db();
     commit_create(
         &db,
@@ -458,7 +458,7 @@ fn clones_share_branches_across_threads() {
 }
 
 /// Many branches over one head, sealed, then committed at once from threads.
-fn race(writers: u32) -> (Database, Vec<Result<u32>>) {
+fn race(writers: u32) -> (TestDb, Vec<Result<u32>>) {
     let (db, _) = setup();
     let barrier = Arc::new(Barrier::new(writers as usize));
     let threads: Vec<_> = (0..writers)

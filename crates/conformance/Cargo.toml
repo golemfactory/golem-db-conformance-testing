@@ -7,6 +7,9 @@ license.workspace = true
 
 [dependencies]
 golemdb-api = { path = "../../golem-db/crates/api" }
+tempfile = "3"
 
 [dev-dependencies]
-tempfile = "3"
+# Independent implementations of the two hash functions, to compute spec values.
+blake3 = "1"
+sha3 = "0.10"

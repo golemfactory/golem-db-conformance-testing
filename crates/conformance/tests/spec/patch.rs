@@ -2,7 +2,7 @@
 
 use golemdb_conformance::*;
 
-fn setup() -> (Database, BranchId) {
+fn setup() -> (TestDb, BranchId) {
     let db = db();
     commit_create(
         &db,

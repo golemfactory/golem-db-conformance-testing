@@ -19,7 +19,7 @@ fn sealed_branch(db: &Database) -> BranchId {
     branch
 }
 
-fn setup() -> Database {
+fn setup() -> TestDb {
     let db = db();
     commit_create(&db, RecordOp::create(key(1), B));
     db
