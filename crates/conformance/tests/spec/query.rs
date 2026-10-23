@@ -1,7 +1,7 @@
 //! Query and count: "Specified, not yet implemented → Query" in the API spec,
 //! detailed by `docs/query-proposal.md` (the call, the AST, execution rules,
-//! errors, staging). `Not`, `Exists`, the cursor and the `#params` caps are not
-//! on `main` and do not compile against it yet.
+//! errors, staging). `Not`, the cursor and the `#params` caps are not on `main`
+//! and do not compile against it yet.
 
 use std::ops::Bound::{self, Excluded, Included, Unbounded};
 
@@ -680,22 +680,19 @@ fn only_the_head_can_be_queried() {
     }
 }
 
-fn not_implemented_ops() -> [QueryOp; 3] {
-    let f = || eq("color", marker::Str, "red");
-    [
-        QueryOp::from_filter(f(), B).sort([SortKey::asc("n", CellType::Uint(Width::W4))]),
-        QueryOp::from_filter(f(), B).limit(1),
-        QueryOp::from_filter(f(), B).offset(1),
-    ]
+fn sorted() -> QueryOp {
+    QueryOp::from_filter(eq("color", marker::Str, "red"), B)
+        .sort([SortKey::asc("n", CellType::Uint(Width::W4))])
 }
 
 /// Staging: "unsupported parts return `NotImplemented`, naming the part"
 #[test]
-fn sort_limit_and_offset_are_not_implemented_yet() {
+fn sort_is_not_implemented_yet() {
     let db = dataset();
-    for op in not_implemented_ops() {
-        assert_err!(db.query(None, op).result, ApiError::NotImplemented { .. });
-    }
+    assert_err!(
+        db.query(None, sorted()).result,
+        ApiError::NotImplemented { .. }
+    );
 }
 
 /// QR5 "Order of checks: first the top-level parts not implemented yet, at no
@@ -705,12 +702,10 @@ fn sort_limit_and_offset_are_not_implemented_yet() {
 #[ignore = "spec-gap: the commit is checked before NotImplemented parts and admission (query proposal QR5)"]
 fn not_implemented_parts_are_checked_first() {
     let db = dataset();
-    for op in not_implemented_ops() {
-        assert_err!(
-            db.query(Some(CommitId::new(99)), op).result,
-            ApiError::NotImplemented { .. }
-        );
-    }
+    assert_err!(
+        db.query(Some(CommitId::new(99)), sorted()).result,
+        ApiError::NotImplemented { .. }
+    );
 }
 
 #[test]
@@ -750,4 +745,156 @@ fn query_receipts() {
         assert_eq!(receipt.cost, 0);
         assert_eq!(receipt.details, Details::default());
     }
+}
+
+fn exists(field: &str, ty: Option<ExistsType>) -> Filter {
+    Filter::Exists {
+        field: name(field),
+        ty,
+    }
+}
+
+/// "An `Exists` matches the records holding an attribute of its name: of its type,
+/// or, with no type, of any type"; "As for every leaf, only attribute cells are indexed."
+#[test]
+fn exists_matches_attributes_of_a_name() {
+    let db = dataset();
+    let str_ = || Some(ExistsType::of(marker::Str));
+    assert_eq!(matches(&db, exists("color", str_())), [1, 2, 3, 6]);
+    assert_eq!(
+        matches(&db, exists("color", Some(ExistsType::of(marker::U32)))),
+        [4]
+    );
+    assert_eq!(
+        matches(&db, exists("color", Some(ExistsType::of(marker::U64)))),
+        [0u8; 0]
+    );
+    assert_eq!(matches(&db, exists("color", None)), [1, 2, 3, 4, 6]); // not 7: a field
+    assert_eq!(matches(&db, exists("n", None)), [1, 2, 3, 5, 6]); // not 4: a field
+    assert_eq!(matches(&db, exists("label", str_())), [1, 2, 3, 5, 6]);
+    assert_eq!(matches(&db, exists("nope", None)), [0u8; 0]);
+    assert_eq!(
+        matches(
+            &db,
+            Filter::And(vec![exists("color", str_()), eq("n", marker::U32, 3)])
+        ),
+        [3]
+    );
+}
+
+/// "`bytes` cannot be queried, being field-only": no `Exists` of type `bytes` can be built.
+#[test]
+fn exists_of_bytes_cannot_be_built() {
+    assert!(ExistsType::try_from(CellType::Bytes).is_err());
+    assert!(ExistsType::try_from(CellType::Str).is_ok());
+}
+
+#[test]
+fn exists_with_an_invalid_name_is_invalid_argument() {
+    let db = dataset();
+    assert_err!(
+        db.query(None, QueryOp::from_filter(exists("bad name", None), B))
+            .result,
+        ApiError::InvalidArgument { .. }
+    );
+}
+
+/// `n` records with `t = true`, created in key order.
+fn many(n: u8) -> TestDb {
+    let db = db();
+    in_commit(&db, |b| {
+        for k in 1..=n {
+            db.create(
+                b,
+                RecordOp::create(key(k), B).attribute("t", CellValue::from_bool(true)),
+            )
+            .ok();
+        }
+    });
+    db
+}
+
+fn page(db: &Database, offset: Option<u64>, limit: Option<u64>) -> (Vec<u8>, Option<u64>) {
+    let mut op = QueryOp::from_filter(eq("t", marker::Bool, true), B).with_total();
+    if let Some(offset) = offset {
+        op = op.offset(offset);
+    }
+    if let Some(limit) = limit {
+        op = op.limit(limit);
+    }
+    let page = db.query(None, op).ok();
+    (
+        page.records.iter().map(|r| r.key.0[0]).collect(),
+        page.total_matched,
+    )
+}
+
+/// "the page ends at `limit` records"; "`total_matched` is the size of the match set"
+#[test]
+fn limit_returns_the_first_matches() {
+    let db = many(10);
+    assert_eq!(page(&db, None, Some(3)), (vec![1, 2, 3], Some(10)));
+    assert_eq!(page(&db, None, Some(10)), ((1..=10).collect(), Some(10)));
+    assert_eq!(page(&db, None, Some(11)), ((1..=10).collect(), Some(10)));
+    assert_eq!(
+        db.count(None, CountOp::filter(eq("t", marker::Bool, true), B))
+            .ok(),
+        10
+    );
+}
+
+/// "The next page's `offset` is the previous one plus the records returned; an
+/// `offset` past the last match gives an empty page."
+#[test]
+fn offset_pages_through_the_matches() {
+    let db = many(10);
+    assert_eq!(page(&db, Some(3), Some(4)), (vec![4, 5, 6, 7], Some(10)));
+    assert_eq!(page(&db, Some(8), Some(4)), (vec![9, 10], Some(10)));
+    assert_eq!(page(&db, Some(10), Some(4)), (vec![], Some(10)));
+    assert_eq!(page(&db, Some(u64::MAX), Some(4)), (vec![], Some(10)));
+    assert_eq!(page(&db, Some(7), None), (vec![8, 9, 10], Some(10)));
+    let mut all = Vec::new();
+    let mut offset = 0;
+    loop {
+        let (keys, _) = page(&db, Some(offset), Some(3));
+        if keys.is_empty() {
+            break;
+        }
+        offset += keys.len() as u64;
+        all.extend(keys);
+    }
+    assert_eq!(all, (1..=10).collect::<Vec<u8>>());
+}
+
+/// "A `limit` of 0 is `InvalidQuery`, and one above `#maxQueryLimit` is `LimitExceeded`"
+#[test]
+fn limit_of_zero_or_above_the_cap_is_rejected() {
+    let db = many(3);
+    let op = |limit| QueryOp::from_filter(eq("t", marker::Bool, true), B).limit(limit);
+    assert_err!(db.query(None, op(0)).result, ApiError::InvalidQuery { .. });
+    assert_err!(
+        db.query(None, op(u64::MAX)).result,
+        ApiError::LimitExceeded { .. }
+    );
+}
+
+/// "Without `limit` …, the caps `#maxQueryLimit` and `#maxQueryBytes` are the
+/// defaults": a page is capped, `total_matched` still counts every match, and
+/// paging by offset reaches every record once, in order.
+#[test]
+fn pages_without_limit_are_capped_and_page_through_everything() {
+    let db = many(250);
+    let (first, total) = page(&db, None, None);
+    assert_eq!(total, Some(250));
+    assert!(!first.is_empty() && first.len() <= 250);
+    assert_eq!(first, (1..=first.len() as u8).collect::<Vec<u8>>());
+    let mut all = Vec::new();
+    loop {
+        let (keys, _) = page(&db, Some(all.len() as u64), None);
+        if keys.is_empty() {
+            break;
+        }
+        all.extend(keys);
+    }
+    assert_eq!(all, (1..=250).collect::<Vec<u8>>());
 }

@@ -14,6 +14,8 @@ fn open(path: &std::path::Path, genesis: Genesis, mode: OpenMode) -> OpenResult<
     Database::open(path, &OpenConfig::new(genesis).with_mode(mode))
 }
 
+const RECORD_YAML: &str = "record_limits: {max_cells: 32, max_indexed_cells: 24}\n";
+
 const SPEC_YAML: &str = "\
 hash_function: keccak-256        # or blake3
 cell_limits:
@@ -25,7 +27,7 @@ record_keys: caller_assigned     # or:  record_keys: { generated: { seed: \"0x�
 
 /// The spec's own genesis example parses.
 #[test]
-#[ignore = "spec-gap: record_keys (key modes) not implemented; Genesis rejects the field"]
+#[ignore = "spec-gap: record_keys (key modes) not implemented; Genesis rejects the field (and now also requires record_limits, which the example lacks)"]
 fn the_spec_genesis_example_parses() {
     let genesis = Genesis::from_yaml(SPEC_YAML).unwrap();
     assert_eq!(genesis.hash_function, HashAlgorithm::Keccak256);
@@ -36,17 +38,28 @@ fn the_spec_genesis_example_parses() {
 #[test]
 fn genesis_yaml_rejects_missing_duplicate_and_unknown_fields() {
     let limits = "cell_limits:\n  max_cell_name_len: 32\n  max_str_len: 64\n  max_bytes_len: 128\n";
-    let base = format!("hash_function: blake3\n{limits}");
+    let base = format!("hash_function: blake3\n{limits}{RECORD_YAML}");
     let genesis = Genesis::from_yaml(&base).unwrap();
     assert_eq!(genesis.hash_function, HashAlgorithm::Blake3);
     assert_eq!(genesis.cell_limits, LIMITS);
+    assert_eq!(genesis.record_limits, RECORD_LIMITS);
     for (case, yaml) in [
-        ("missing hash_function", limits.to_string()),
-        ("missing cell_limits", "hash_function: blake3\n".to_string()),
+        ("missing hash_function", format!("{limits}{RECORD_YAML}")),
+        (
+            "missing cell_limits",
+            format!("hash_function: blake3\n{RECORD_YAML}"),
+        ),
+        (
+            "missing record_limits",
+            format!("hash_function: blake3\n{limits}"),
+        ),
         (
             "missing a limit",
-            "hash_function: blake3\ncell_limits:\n  max_cell_name_len: 32\n  max_str_len: 64\n"
-                .to_string(),
+            base.replace("  max_bytes_len: 128\n", ""),
+        ),
+        (
+            "missing a record limit",
+            base.replace(", max_indexed_cells: 24", ""),
         ),
         ("duplicate field", format!("{base}hash_function: blake3\n")),
         (
@@ -79,7 +92,7 @@ fn genesis_load_reads_a_file() {
     let path = dir.path().join("genesis.yaml");
     std::fs::write(
         &path,
-        "hash_function: keccak-256\ncell_limits: { max_cell_name_len: 32, max_str_len: 64, max_bytes_len: 128 }\n",
+        format!("hash_function: keccak-256\ncell_limits: {{ max_cell_name_len: 32, max_str_len: 64, max_bytes_len: 128 }}\n{RECORD_YAML}"),
     )
     .unwrap();
     assert_eq!(Genesis::load(&path).unwrap(), genesis());
@@ -96,7 +109,12 @@ fn zero_name_length_is_invalid_config() {
         max_cell_name_len: 0,
         ..LIMITS
     };
-    let result = Database::open_memory(&Genesis::new(HashAlgorithm::Keccak256, limits, None));
+    let result = Database::open_memory(&Genesis::new(
+        HashAlgorithm::Keccak256,
+        limits,
+        RECORD_LIMITS,
+        None,
+    ));
     assert!(
         matches!(result, Err(OpenError::InvalidConfig(_))),
         "{:?}",
@@ -121,7 +139,7 @@ fn limits_that_do_not_fit_an_mdbx_key_are_invalid_config() {
     ] {
         let result = open(
             dir.path(),
-            Genesis::new(HashAlgorithm::Keccak256, limits, None),
+            Genesis::new(HashAlgorithm::Keccak256, limits, RECORD_LIMITS, None),
             OpenMode::CreateIfMissing,
         );
         assert!(
@@ -137,7 +155,7 @@ fn limits_that_do_not_fit_an_mdbx_key_are_invalid_config() {
     };
     open(
         dir.path(),
-        Genesis::new(HashAlgorithm::Keccak256, limits, None),
+        Genesis::new(HashAlgorithm::Keccak256, limits, RECORD_LIMITS, None),
         OpenMode::CreateIfMissing,
     )
     .unwrap();
@@ -213,7 +231,7 @@ fn create_new_refuses_an_initialized_store() {
         Err(OpenError::AlreadyInitialized)
     ));
     // "validate, then": a mismatching genesis is reported as such.
-    let other = Genesis::new(HashAlgorithm::Blake3, LIMITS, None);
+    let other = Genesis::new(HashAlgorithm::Blake3, LIMITS, RECORD_LIMITS, None);
     assert!(matches!(
         open(dir.path(), other, OpenMode::CreateNew),
         Err(OpenError::GenesisMismatch)
@@ -226,13 +244,32 @@ fn reopening_with_another_genesis_is_genesis_mismatch() {
     let dir = tempfile::tempdir().unwrap();
     open(dir.path(), genesis(), OpenMode::CreateNew).unwrap();
     for other in [
-        Genesis::new(HashAlgorithm::Blake3, LIMITS, None),
+        Genesis::new(HashAlgorithm::Blake3, LIMITS, RECORD_LIMITS, None),
+        Genesis::new(
+            HashAlgorithm::Keccak256,
+            LIMITS,
+            RecordLimits {
+                max_cells: 33,
+                ..RECORD_LIMITS
+            },
+            None,
+        ),
+        Genesis::new(
+            HashAlgorithm::Keccak256,
+            LIMITS,
+            RecordLimits {
+                max_indexed_cells: 23,
+                ..RECORD_LIMITS
+            },
+            None,
+        ),
         Genesis::new(
             HashAlgorithm::Keccak256,
             CellLimits {
                 max_str_len: 65,
                 ..LIMITS
             },
+            RECORD_LIMITS,
             None,
         ),
         Genesis::new(
@@ -241,6 +278,7 @@ fn reopening_with_another_genesis_is_genesis_mismatch() {
                 max_cell_name_len: 31,
                 ..LIMITS
             },
+            RECORD_LIMITS,
             None,
         ),
         Genesis::new(
@@ -249,6 +287,7 @@ fn reopening_with_another_genesis_is_genesis_mismatch() {
                 max_bytes_len: 127,
                 ..LIMITS
             },
+            RECORD_LIMITS,
             None,
         ),
     ] {
@@ -315,7 +354,7 @@ fn genesis_and_info_accessors() {
 #[test]
 fn genesis_index_root_is_the_hash_of_nothing() {
     for algorithm in [HashAlgorithm::Keccak256, HashAlgorithm::Blake3] {
-        let db = open_db(&Genesis::new(algorithm, LIMITS, None));
+        let db = open_db(&Genesis::new(algorithm, LIMITS, RECORD_LIMITS, None));
         assert_eq!(db.info().index_root, h(algorithm, b""), "{algorithm:?}");
     }
 }
@@ -328,7 +367,13 @@ fn genesis_writes_only_the_listed_cells() {
     for (name, extra) in [
         (
             "#params",
-            &["#maxBytesLen", "#maxCellNameLen", "#maxStrLen"][..],
+            &[
+                "#maxBytesLen",
+                "#maxCellNameLen",
+                "#maxRecordCells",
+                "#maxRecordIndexedCells",
+                "#maxStrLen",
+            ][..],
         ),
         ("#alloc", &["#nextRecordID"][..]),
         ("#roots", &[][..]),
@@ -373,7 +418,11 @@ const SYSTEM_RECORDS: [(&str, u64); 7] = [
 
 /// The genesis identity, computed from the spec's formula ("What genesis writes")
 /// with our own hash implementations, caller-assigned keys.
-fn spec_genesis_id(algorithm: HashAlgorithm, limits: CellLimits) -> [u8; 32] {
+fn spec_genesis_id(
+    algorithm: HashAlgorithm,
+    limits: CellLimits,
+    records: RecordLimits,
+) -> [u8; 32] {
     let field = |type_id: u8, payload: &[u8]| [&[type_id][..], payload].concat();
     let cell =
         |id: u64, name: &[u8], value: Vec<u8>| ([&id.to_be_bytes()[..], name].concat(), value);
@@ -399,6 +448,17 @@ fn spec_genesis_id(algorithm: HashAlgorithm, limits: CellLimits) -> [u8; 32] {
         field(12, &limits.max_bytes_len.to_be_bytes()),
     ));
     cells.push(cell(0, b"#keyMode", field(12, &0u32.to_be_bytes())));
+    // Design §4 `#params`: both caps are `u32` (BE).
+    cells.push(cell(
+        0,
+        b"#maxRecordCells",
+        field(12, &(records.max_cells as u32).to_be_bytes()),
+    ));
+    cells.push(cell(
+        0,
+        b"#maxRecordIndexedCells",
+        field(12, &(records.max_indexed_cells as u32).to_be_bytes()),
+    ));
     cells.push(cell(1, b"#nextRecordID", field(13, &64u64.to_be_bytes())));
     cells.sort();
     let hash_id: u16 = match algorithm {
@@ -422,13 +482,13 @@ fn spec_genesis_id(algorithm: HashAlgorithm, limits: CellLimits) -> [u8; 32] {
 /// "genesis_id = H( "golemdb/genesis/v1" ‖ 0x00 ‖ format ‖ hash_id ‖ roaring ‖ cell
 /// count ‖ for each genesis cell in key order: len(key) ‖ key ‖ len(value) ‖ value )"
 #[test]
-#[ignore = "spec-gap: #keyMode is not a genesis cell yet, so genesis_id differs from the spec's"]
+#[ignore = "spec-gap: no #keyMode genesis cell, and the record caps are stored as u64, not u32"]
 fn genesis_id_follows_the_spec_formula() {
     for algorithm in [HashAlgorithm::Keccak256, HashAlgorithm::Blake3] {
-        let db = open_db(&Genesis::new(algorithm, LIMITS, None));
+        let db = open_db(&Genesis::new(algorithm, LIMITS, RECORD_LIMITS, None));
         assert_eq!(
             db.info().genesis_id,
-            spec_genesis_id(algorithm, LIMITS),
+            spec_genesis_id(algorithm, LIMITS, RECORD_LIMITS),
             "{algorithm:?}"
         );
     }
@@ -437,7 +497,8 @@ fn genesis_id_follows_the_spec_formula() {
 /// "YAML formatting and field order do not affect the identity"; every setting does.
 #[test]
 fn genesis_id_depends_on_settings_only() {
-    let id = |yaml: &str| *open_db(&Genesis::from_yaml(yaml).unwrap()).info();
+    let id =
+        |yaml: &str| *open_db(&Genesis::from_yaml(&format!("{yaml}{RECORD_YAML}")).unwrap()).info();
     let a = id(
         "hash_function: keccak-256\ncell_limits:\n  max_cell_name_len: 32\n  max_str_len: 64\n  max_bytes_len: 128\n",
     );
@@ -452,9 +513,14 @@ fn genesis_id_depends_on_settings_only() {
     let limits = id(
         "hash_function: keccak-256\ncell_limits: {max_cell_name_len: 32, max_str_len: 64, max_bytes_len: 129}\n",
     );
+    let record_limits = *open_db(&Genesis::from_yaml(
+        "hash_function: keccak-256\ncell_limits: {max_cell_name_len: 32, max_str_len: 64, max_bytes_len: 128}\nrecord_limits: {max_cells: 32, max_indexed_cells: 23}\n",
+    ).unwrap())
+    .info();
     assert_ne!(a.genesis_id, blake.genesis_id);
     assert_ne!(a.genesis_id, limits.genesis_id);
     assert_ne!(a.state_root, limits.state_root);
+    assert_ne!(a.genesis_id, record_limits.genesis_id);
 }
 
 /// Identity and roots are a function of the genesis only: same on memory and MDBX stores.

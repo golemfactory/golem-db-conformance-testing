@@ -14,7 +14,7 @@ use std::time::Duration;
 
 use anyhow::{Context, Result, bail};
 use config::{Scenario, Workload};
-use golemdb_api::{Api, Database, Genesis, MdbxOptions, OpenConfig};
+use golemdb_api::{Api, Database, Genesis, MdbxOptions, OpenConfig, RecordLimits};
 
 pub type Db = Arc<dyn Api + Send + Sync>;
 
@@ -65,6 +65,11 @@ fn run(scenario: &Scenario) -> Result<String> {
     let config = OpenConfig::new(Genesis::new(
         scenario.database.hash,
         scenario.database.limits,
+        // Load tests measure engine work, not the per-record caps.
+        RecordLimits {
+            max_cells: u64::MAX,
+            max_indexed_cells: u64::MAX,
+        },
         None,
     ));
     let options = MdbxOptions {

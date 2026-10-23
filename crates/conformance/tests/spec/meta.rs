@@ -22,7 +22,6 @@ fn meta_of(db: &Database, target: ReadTarget) -> [u64; 4] {
 
 /// "`create` writes it"; "a full `get` returns `#meta`; so does `.only(["#meta"])`"
 #[test]
-#[ignore = "spec-gap: #meta not implemented"]
 fn create_writes_meta() {
     let db = db();
     let user = [
@@ -53,7 +52,6 @@ fn create_writes_meta() {
 
 /// An empty record has `#meta` with all counts zero.
 #[test]
-#[ignore = "spec-gap: #meta not implemented"]
 fn empty_record_has_zero_meta() {
     let db = db();
     commit_create(&db, RecordOp::create(key(1), B));
@@ -62,7 +60,6 @@ fn empty_record_has_zero_meta() {
 
 /// "`patch` writes it only when a count changes"; the counts follow every mutation.
 #[test]
-#[ignore = "spec-gap: #meta not implemented"]
 fn patch_keeps_meta_exact() {
     let db = db();
     commit_create(
@@ -91,7 +88,6 @@ fn patch_keeps_meta_exact() {
 
 /// "`delete` removes it."
 #[test]
-#[ignore = "spec-gap: #meta not implemented"]
 fn recreated_record_has_fresh_meta() {
     let db = db();
     commit_create(

@@ -169,7 +169,6 @@ fn projection_duplicates_collapse() {
 
 /// A full read "returns every cell, `#key` and `#meta` included".
 #[test]
-#[ignore = "spec-gap: #meta not implemented"]
 fn full_read_includes_key_and_meta() {
     let db = setup();
     let record = read(&db, ReadTarget::Head, key(1));

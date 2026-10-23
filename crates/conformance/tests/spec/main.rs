@@ -16,6 +16,7 @@ mod order_of_checks;
 mod patch;
 mod query;
 mod receipts;
+mod record_caps;
 mod record_keys;
 mod record_op;
 mod records;

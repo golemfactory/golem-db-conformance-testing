@@ -14,11 +14,18 @@ pub const LIMITS: CellLimits = CellLimits {
     max_bytes_len: 128,
 };
 
+/// Per-record caps, roomy enough for every test record (the widest has 24 user
+/// cells, 23 of them attributes); `record_caps.rs` tests the caps themselves.
+pub const RECORD_LIMITS: RecordLimits = RecordLimits {
+    max_cells: 32,
+    max_indexed_cells: 24,
+};
+
 /// Budgets are not enforced yet; every call states `Unlimited`.
 pub const B: Budget = Budget::Unlimited;
 
 pub fn genesis() -> Genesis {
-    Genesis::new(HashAlgorithm::Keccak256, LIMITS, None)
+    Genesis::new(HashAlgorithm::Keccak256, LIMITS, RECORD_LIMITS, None)
 }
 
 /// A fresh database on MDBX, the store hosts run on, in its own temporary

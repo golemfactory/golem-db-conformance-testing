@@ -19,6 +19,7 @@ fn immutable_genesis() -> Genesis {
     Genesis::new(
         HashAlgorithm::Keccak256,
         LIMITS,
+        RECORD_LIMITS,
         Some(ImmutableDataConfig::new(
             2,
             vec![segment("headers", &["h"]), segment("bodies", &["a", "b"])],
