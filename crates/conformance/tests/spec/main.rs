@@ -3,6 +3,7 @@
 //! but `main` does not implement yet are `#[ignore = "spec-gap: …"]`; list
 //! them with `cargo test -p golemdb-conformance -- --ignored`.
 
+mod branches;
 mod cell_names;
 mod cell_types;
 mod create;
@@ -11,6 +12,7 @@ mod get;
 mod meta;
 mod order_of_checks;
 mod patch;
+mod query;
 mod receipts;
 mod record_keys;
 mod record_op;
