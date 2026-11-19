@@ -1,0 +1,65 @@
+# arkiv-blocks.toml with garbage collection on: trie rows that only commits older than the last 1,000 reach
+# are deleted inside the commits (golem-db's tries GC). Same seed, so the same records, blocks and queries.
+#
+# Queries on a database written the way Arkiv writes it: large-arkiv-blocks' blocks of 17 creates (1-100 KB
+# payloads), then blocks of 26 creates, updates and deletes, with queries run between blocks at 100k, 1M,
+# 2.5M, 5.1M and 10.2M records and twice in the update phase. Grows to ~1 TB (~8x RAM on the test server).
+# `random` values draw a new value per run, so a query isn't just its previous run read back from the page
+# cache; `first ms` is each query's first run.
+name = "arkiv-blocks-gc-queries"
+description = "arkiv-blocks-queries with tries GC (pruning window 1,000 commits)"
+seed = 8
+commit_log = "results/arkiv-blocks-gc-queries.csv"
+query_log = "results/arkiv-blocks-gc-queries-queries.csv"
+table_log = "results/arkiv-blocks-gc-queries-tables.csv"
+table_log_every = 5000
+
+[database]
+hash = "keccak-256"
+limits = { max_cell_name_len = 32, max_str_len = 64, max_bytes_len = 102400 }
+max_map_size_gib = 1536
+pruning_window = 1000
+
+[shape]
+patch_all_cells = true                                                                          # updates replace the entity
+attributes = [
+    { name = "project", type = "str", cardinality = 50, distribution = "zipf", len = 16 },     # top ~22%, rank 40 ~0.5%
+    { name = "entityType", type = "str", cardinality = 10, len = 12 },
+    { name = "id", type = "str", distribution = "unique", len = 36 },                          # UUID-sized
+    { name = "created", type = "u64", distribution = "unique" },                               # timestamp
+    { name = "status", type = "str", cardinality = 4, len = 8 },                               # 25% each
+    { name = "ref", type = "str", cardinality = 10000, distribution = "zipf", len = 64 },     # key of another entity
+    { name = "$owner", type = "str", cardinality = 10000, distribution = "zipf", len = 40 },  # wallet: top ~10%
+    { name = "$expiresAt", type = "u64", cardinality = 1000000 },                              # block number, uniform
+]
+fields = [{ name = "payload", type = "bytes", len = [
+    { min = 1024, max = 4096, weight = 90 },
+    { min = 4096, max = 102400, weight = 10 },
+] }]
+
+[workload]
+kind = "blocks"
+blocks = [
+    { ops = 17, repeat = 600000 },                                                     # fill: 10.2M records
+    { ops = 26, repeat = 100000, mix = { create = 35, patch = 30, delete = 35 } },     # steady state
+]
+# 100k, 1M, 2.55M, 5.1M and 10.2M records, then halfway through and at the end of the update phase.
+query_at = [6000, 60000, 150000, 300000, 600000, 650000, 700000]
+query_runs = 50
+queries = [
+    { name = "status (25%)", filter = { eq = { status = 0 } } },
+    { name = "status, limit 10", filter = { eq = { status = 0 } }, limit = 10 },
+    { name = "project top", filter = { eq = { project = 0 } } },
+    { name = "project top + status", filter = { and = [{ eq = { project = 0 } }, { eq = { status = 1 } }] } },
+    { name = "project 40 + status", filter = { and = [{ eq = { project = 40 } }, { eq = { status = 1 } }] } },
+    { name = "project random + status random", filter = { and = [{ eq = { project = "random" } }, { eq = { status = "random" } }] } },
+    { name = "project random + entityType random", filter = { and = [{ eq = { project = "random" } }, { eq = { entityType = "random" } }] } },
+    { name = "$owner top", filter = { eq = { "$owner" = 0 } } },
+    { name = "$owner random", filter = { eq = { "$owner" = "random" } } },
+    { name = "ref random", filter = { eq = { ref = "random" } } },
+    { name = "id random (one record)", filter = { eq = { id = "random" } } },
+    { name = "$expiresAt > (1%)", filter = { range = { "$expiresAt" = { gt = 990000 } } } },
+    { name = "$expiresAt > (10%)", filter = { range = { "$expiresAt" = { gt = 900000 } } } },
+    { name = "$expiresAt > (50%)", filter = { range = { "$expiresAt" = { gt = 500000 } } } },
+    { name = "project random + $expiresAt > (10%)", filter = { and = [{ eq = { project = "random" } }, { range = { "$expiresAt" = { gt = 900000 } } }] } },
+]

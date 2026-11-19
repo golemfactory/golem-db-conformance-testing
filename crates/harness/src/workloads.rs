@@ -10,9 +10,10 @@ use golemdb_api::{ApiError, Budget, RecordKey, RecordOp, SealInfo, op};
 use rand::Rng;
 
 use crate::Db;
-use crate::config::{Blocks, Mix, Scenario};
+use crate::config::{Blocks, Mix, Query, Scenario};
 use crate::generate::{Generator, key};
 use crate::profile;
+use crate::queries::Runner;
 use crate::stats::Stats;
 use crate::tables;
 
@@ -100,7 +101,7 @@ fn run_branch(db: &Db, ops: &[Op], stats: &mut Stats) -> Result<Option<Timing>> 
 }
 
 /// Keys one writer has committed, so it can patch and delete its own records.
-struct Pool {
+pub struct Pool {
     seed: u64,
     stream: u64,
     next: u64,
@@ -116,7 +117,7 @@ struct Plan {
 }
 
 impl Pool {
-    fn new(seed: u64, stream: u64) -> Self {
+    pub fn new(seed: u64, stream: u64) -> Self {
         Self {
             seed,
             stream,
@@ -176,22 +177,35 @@ pub fn preload(db: &Db, scenario: &Scenario) -> Result<Duration> {
     let start = Instant::now();
     let mut generator = Generator::new(&scenario.shape, scenario.seed, u64::MAX)?;
     let mut pool = Pool::new(scenario.seed, u64::MAX);
-    let mut done = 0;
-    while done < scenario.preload {
-        let n = 10_000.min(scenario.preload - done) as usize;
-        let plan = pool.plan(&mut generator, n, &Mix::default())?;
-        if run_branch(db, &plan.ops, &mut Stats::default())?.is_none() {
-            bail!("preload lost a commit race");
-        }
-        done += n as u64;
-    }
+    fill(db, &mut pool, &mut generator, scenario.preload)?;
     Ok(start.elapsed())
 }
 
-pub fn blocks(db: &Db, scenario: &Scenario, blocks: &[Blocks], mix: &Mix) -> Result<Outcome> {
+/// Commits `records` creates, 10k per commit.
+pub fn fill(db: &Db, pool: &mut Pool, generator: &mut Generator, records: u64) -> Result<()> {
+    let mut done = 0;
+    while done < records {
+        let n = 10_000.min(records - done) as usize;
+        let plan = pool.plan(generator, n, &Mix::default())?;
+        if run_branch(db, &plan.ops, &mut Stats::default())?.is_none() {
+            bail!("a single writer lost a commit race");
+        }
+        done += n as u64;
+    }
+    Ok(())
+}
+
+pub fn blocks(
+    db: &Db,
+    scenario: &Scenario,
+    blocks: &[Blocks],
+    mix: &Mix,
+    (queries, query_at, query_runs): (&[Query], &[u64], usize),
+) -> Result<Outcome> {
     let mut stats = Stats::default();
     let mut generator = Generator::new(&scenario.shape, scenario.seed, 0)?;
     let mut pool = Pool::new(scenario.seed, 0);
+    let mut runner = Runner::new(scenario, queries, query_runs, &generator)?;
     let mut notes = Vec::new();
     // Only time inside branches counts; generating records is harness work.
     let mut wall = Duration::ZERO;
@@ -274,6 +288,15 @@ pub fn blocks(db: &Db, scenario: &Scenario, blocks: &[Blocks], mix: &Mix) -> Res
                 file.flush()?;
             }
             pool.committed(plan);
+            // Queries run between commits, outside every block's time.
+            if query_at.contains(&commit_no) {
+                let records = scenario.preload + pool.live.len() as u64;
+                println!(
+                    "  after commit {commit_no}: {records} records, disk {:.0} MiB",
+                    crate::dir_size(db_dir) as f64 / (1 << 20) as f64
+                );
+                runner.run(db, &generator, Some(commit_no), records)?;
+            }
             if !profiled {
                 wall += took;
                 size_time += took;
@@ -308,7 +331,10 @@ pub fn blocks(db: &Db, scenario: &Scenario, blocks: &[Blocks], mix: &Mix) -> Res
 }
 
 /// Opens a CSV log, creating its directory, and writes the header.
-fn csv(path: &Option<String>, header: &str) -> Result<Option<std::io::BufWriter<std::fs::File>>> {
+pub fn csv(
+    path: &Option<String>,
+    header: &str,
+) -> Result<Option<std::io::BufWriter<std::fs::File>>> {
     let Some(path) = path else { return Ok(None) };
     if let Some(dir) = Path::new(path).parent() {
         std::fs::create_dir_all(dir)?;

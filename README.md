@@ -54,6 +54,7 @@ hash = "keccak-256"             # or "blake3"
 limits = { max_cell_name_len = 32, max_str_len = 64, max_bytes_len = 1024 }
 # path = "target/load-db"       # wiped before each run
 # max_map_size_gib = 64
+# pruning_window = 128          # garbage-collect trie rows older than this many commits
 
 [shape]                         # every record
 attributes = [                  # indexed
@@ -70,6 +71,8 @@ blocks = [{ ops = 1000, repeat = 20 }]
 mix = { create = 4, patch = 1, delete = 0 }
 
 # A block group can also take its own `mix`, and `warmup = true` to run it unmeasured.
+# query_at = [6000, 60000]      # run `queries` (as in `kind = "queries"`) after these commits, between blocks
+# query_runs = 50
 # commit_log = "results/x.csv"  # top level: one CSV line per commit (blocks only)
 # table_log = "results/y.csv"   # top level: every MDBX table's size after each commit (blocks only)
 # table_log_every = 100         # top level: ... or only every N commits
@@ -79,6 +82,15 @@ mix = { create = 4, patch = 1, delete = 0 }
 # writers = 8
 # ops_per_branch = 100
 # duration_secs = 30
+
+# kind = "queries"              # fill to each size, then run every query (p50/p99, matches, records returned)
+# at = [10000, 100000, 1000000] # total records, preload included
+# runs = 50                     # per query and size; a query stops after 10 s
+# queries = [
+#     { name = "project + status", filter = { and = [{ eq = { project = 0 } }, { eq = { status = 1 } }] } },
+#     { name = "expires later", filter = { range = { "$expiresAt" = { gt = 900000 } } }, count = true },
+# ]
+# query_log = "results/z.csv"   # top level: one CSV line per query and size
 ```
 
 **Cell options:**
@@ -99,6 +111,19 @@ table (`Cell`, `CellTrie`, `Index`, ...), plus the file space outside the tables
 earlier commits, waiting for reuse), `other` (MDBX metadata), `unused` (grown ahead of need) and `file` (the
 total). It is read by a separate read-only process between commits, so it is not timed, but it does look at
 the storage file directly rather than through the API.
+
+**Queries** name values by rank, not literally, so a query means the same at any database size: for a
+`uniform` or `zipf` attribute, rank `n` is its n-th value (zipf's 0 is the most common); for a `unique` one,
+the n-th value generated (from 1). `"random"` instead of a rank draws a new value for every run, from the
+attribute's own distribution (`{ eq = { "$owner" = "random" } }`: hot wallets often, the long tail rarely),
+so a query isn't just its previous run read back from the page cache. `u64` values are the rank itself, so `range` bounds on a uniform `u64` are
+plain numbers. Attributes used in queries need a fixed `len`. `prefix` takes a literal string (`str` values are
+the rank in hex, zero-padded to `len`). Leaves: `eq`, `in`, `range` (`gt`/`gte`/`lt`/`lte`), `prefix`, `exists`;
+`and` and `or` combine them. Query options: `limit`, `offset`, `only = [names]`, and `count = true` to
+count instead of returning a page. Each query prints `matches` and `returned` (medians over its runs; pages
+always ask for the total, which costs nothing as the whole match set is built anyway), `first ms` (its
+first run, before the page cache holds what it reads) and the p50, p99 and max of all runs. `query_log`
+writes the same per query and size, with the commit (`blocks` only) and the record count.
 
 ## Profiling
 

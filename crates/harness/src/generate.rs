@@ -1,7 +1,7 @@
 //! Deterministic keys and records: same seed and stream, same operations.
 
-use anyhow::Result;
-use golemdb_api::{Budget, CellValue, RecordKey, RecordOp, op};
+use anyhow::{Result, bail};
+use golemdb_api::{Budget, CellType, CellValue, RecordKey, RecordOp, Width, op};
 use rand::{Rng, SeedableRng};
 use rand_chacha::ChaCha8Rng;
 use rand_distr::Zipf;
@@ -13,7 +13,6 @@ pub struct Generator {
     patch_all_cells: bool,
     rng: ChaCha8Rng,
     stream: u64,
-    unique: u64,
     /// Value bytes generated since the last `take_bytes`.
     bytes: usize,
 }
@@ -26,6 +25,8 @@ struct Cell {
     zipf: Option<Zipf<f64>>,
     distribution: Distribution,
     len: Len,
+    /// `unique` values generated so far.
+    generated: u64,
 }
 
 impl Generator {
@@ -52,6 +53,7 @@ impl Generator {
                         zipf,
                         distribution: spec.distribution,
                         len: spec.len.clone(),
+                        generated: 0,
                     });
                 }
             }
@@ -61,7 +63,6 @@ impl Generator {
             patch_all_cells: shape.patch_all_cells,
             rng: ChaCha8Rng::seed_from_u64(mix(seed) ^ stream),
             stream,
-            unique: 0,
             bytes: 0,
         })
     }
@@ -133,21 +134,72 @@ impl Generator {
         let n = match (cell.distribution, &cell.zipf) {
             (Distribution::Uniform, _) => self.rng.random_range(0..cell.cardinality),
             (Distribution::Zipf, Some(zipf)) => self.rng.sample(zipf) as u64 - 1,
-            _ => {
-                self.unique += 1;
-                (self.stream << 40) | self.unique
-            }
+            _ => (self.stream << 40) | (cell.generated + 1),
         };
-        self.bytes += if cell.ty == Type::U64 { 8 } else { len };
-        match cell.ty {
-            Type::U64 => CellValue::from_u64(n),
-            Type::Str => CellValue::from_str(&format!("{n:0>len$x}")),
+        let ty = cell.ty;
+        if cell.distribution == Distribution::Unique {
+            self.cells[i].generated += 1;
+        }
+        self.bytes += if ty == Type::U64 { 8 } else { len };
+        match ty {
             Type::Bytes => {
                 let mut bytes = vec![0u8; len];
                 self.rng.fill(&mut bytes[..]);
                 CellValue::from_bytes(&bytes)
             }
+            ty => encode(ty, n, len),
         }
+    }
+
+    /// The value of rank `n` of attribute `name`, as records hold it: for
+    /// `uniform` and `zipf`, the n-th of its values (zipf's 0 is the most
+    /// common); for `unique`, the n-th value this stream generated (from 1).
+    pub fn value_at(&self, name: &str, n: u64) -> Result<CellValue> {
+        let cell = self.attribute(name)?;
+        let Len::Fixed(len) = cell.len else {
+            bail!("`{name}`: queries need a fixed `len`");
+        };
+        let n = if cell.distribution == Distribution::Unique {
+            (self.stream << 40) | n
+        } else {
+            n
+        };
+        Ok(encode(cell.ty, n, len))
+    }
+
+    /// A rank of attribute `name` drawn as records draw their values: a hot
+    /// zipf value comes up often, a tail one rarely. For `unique`, any value
+    /// generated so far (its record may since have been deleted).
+    pub fn random_rank(&self, name: &str, rng: &mut impl Rng) -> Result<u64> {
+        let cell = self.attribute(name)?;
+        Ok(match (cell.distribution, &cell.zipf) {
+            (Distribution::Uniform, _) => rng.random_range(0..cell.cardinality),
+            (Distribution::Zipf, Some(zipf)) => rng.sample(zipf) as u64 - 1,
+            _ => rng.random_range(1..=cell.generated.max(1)),
+        })
+    }
+
+    /// The cell type of attribute `name`.
+    pub fn type_of(&self, name: &str) -> Result<CellType> {
+        Ok(match self.attribute(name)?.ty {
+            Type::U64 => CellType::Uint(Width::W8),
+            _ => CellType::Str,
+        })
+    }
+
+    fn attribute(&self, name: &str) -> Result<&Cell> {
+        match self.cells.iter().find(|c| c.attribute && c.name == name) {
+            Some(cell) => Ok(cell),
+            None => bail!("`{name}` is not an attribute of the shape"),
+        }
+    }
+}
+
+/// Value `n` of a `u64` or `str` cell of `len` bytes.
+fn encode(ty: Type, n: u64, len: usize) -> CellValue {
+    match ty {
+        Type::U64 => CellValue::from_u64(n),
+        _ => CellValue::from_str(&format!("{n:0>len$x}")),
     }
 }
 

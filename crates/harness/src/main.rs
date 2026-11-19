@@ -3,6 +3,7 @@
 mod config;
 mod generate;
 mod profile;
+mod queries;
 mod stats;
 mod tables;
 mod workloads;
@@ -14,7 +15,7 @@ use std::time::Duration;
 
 use anyhow::{Context, Result, bail};
 use config::{Scenario, Workload};
-use golemdb_api::{Api, Database, Genesis, MdbxOptions, OpenConfig, RecordLimits};
+use golemdb_api::{Api, Database, Genesis, MdbxOptions, OpenConfig, PruningConfig, RecordLimits};
 
 pub type Db = Arc<dyn Api + Send + Sync>;
 
@@ -62,7 +63,7 @@ fn run(scenario: &Scenario) -> Result<String> {
     let _ = std::fs::remove_dir_all(dir);
     std::fs::create_dir_all(dir)?;
     nocow(dir)?;
-    let config = OpenConfig::new(Genesis::new(
+    let mut config = OpenConfig::new(Genesis::new(
         scenario.database.hash,
         scenario.database.limits,
         // Load tests measure engine work, not the per-record caps.
@@ -72,6 +73,9 @@ fn run(scenario: &Scenario) -> Result<String> {
         },
         None,
     ));
+    if let Some(window) = scenario.database.pruning_window {
+        config = config.with_pruning(PruningConfig::new(window));
+    }
     let options = MdbxOptions {
         max_map_size: (scenario.database.max_map_size_gib << 30) as usize,
         ..Default::default()
@@ -91,7 +95,13 @@ fn run(scenario: &Scenario) -> Result<String> {
         );
     }
     let outcome = match &scenario.workload {
-        Workload::Blocks { blocks, mix } => workloads::blocks(&db, scenario, blocks, mix)?,
+        Workload::Blocks {
+            blocks,
+            mix,
+            queries,
+            query_at,
+            query_runs,
+        } => workloads::blocks(&db, scenario, blocks, mix, (queries, query_at, *query_runs))?,
         Workload::Writers {
             writers,
             ops_per_branch,
@@ -105,6 +115,20 @@ fn run(scenario: &Scenario) -> Result<String> {
             Duration::from_secs(*duration_secs),
             mix,
         )?,
+        Workload::Queries { at, runs, queries } => {
+            queries::run(&db, scenario, at, *runs, queries)?;
+            drop(db);
+            println!();
+            return Ok(format!(
+                "{:<24} {:>8} {:>12} {:>14} {:>9.0}  {}",
+                scenario.name,
+                "-",
+                "-",
+                "-",
+                dir_size(dir) as f64 / (1 << 20) as f64,
+                scenario.description
+            ));
+        }
     };
     drop(db);
 

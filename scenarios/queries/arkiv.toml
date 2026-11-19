@@ -1,0 +1,58 @@
+# Arkiv-like entities queried at 10k, 100k and 1M records: the common Arkiv queries
+# ("project and status", "$owner", "$expiresAt > block") and how each kind of query scales.
+# Values in filters are ranks (see README, Queries): project 0 is the most common project.
+name = "queries-arkiv"
+description = "Arkiv-like queries at 10k, 100k and 1M records"
+seed = 7
+query_log = "results/queries-arkiv.csv"
+
+[database]
+hash = "keccak-256"
+limits = { max_cell_name_len = 32, max_str_len = 64, max_bytes_len = 1024 }
+
+[shape]
+attributes = [
+    { name = "kind", type = "str", cardinality = 1, len = 8 },                                 # every record has the same value
+    { name = "status", type = "str", cardinality = 4, len = 8 },                               # 25% each
+    { name = "project", type = "str", cardinality = 50, distribution = "zipf", len = 16 },     # top ~22%, rank 40 ~0.5%
+    { name = "$owner", type = "str", cardinality = 10000, distribution = "zipf", len = 40 },   # wallet: top ~10%, rank 5000 ~0.002%
+    { name = "$expiresAt", type = "u64", cardinality = 1000000 },                              # block number, uniform
+    { name = "id", type = "str", distribution = "unique", len = 36 },                          # one record each, from 1
+]
+fields = [{ name = "payload", type = "bytes", len = 512 }]
+
+[workload]
+kind = "queries"
+at = [10000, 100000, 1000000]
+runs = 50
+queries = [
+    # One value shared by many records: the whole posting list is read, whatever the page size.
+    { name = "kind (all records)", filter = { eq = { kind = 0 } } },
+    { name = "kind, count", filter = { eq = { kind = 0 } }, count = true },
+    { name = "status (25%)", filter = { eq = { status = 0 } } },
+    { name = "status, count", filter = { eq = { status = 0 } }, count = true },
+    { name = "status, limit 10", filter = { eq = { status = 0 } }, limit = 10 },
+    { name = "status, only id", filter = { eq = { status = 0 } }, only = ["id"] },
+    { name = "status, offset 10k", filter = { eq = { status = 0 } }, offset = 10000 },
+    { name = "exists status", filter = { exists = "status" } },
+
+    # Arkiv's common queries.
+    { name = "project top", filter = { eq = { project = 0 } } },
+    { name = "project rank 40", filter = { eq = { project = 40 } } },
+    { name = "project top + status", filter = { and = [{ eq = { project = 0 } }, { eq = { status = 1 } }] } },
+    { name = "project 40 + status", filter = { and = [{ eq = { project = 40 } }, { eq = { status = 1 } }] } },
+    { name = "status + project 40", filter = { and = [{ eq = { status = 1 } }, { eq = { project = 40 } }] } },
+    { name = "$owner top", filter = { eq = { "$owner" = 0 } } },
+    { name = "$owner rank 5000", filter = { eq = { "$owner" = 5000 } } },
+    { name = "$expiresAt > (1%)", filter = { range = { "$expiresAt" = { gt = 990000 } } } },
+    { name = "$expiresAt > (10%)", filter = { range = { "$expiresAt" = { gt = 900000 } } } },
+    { name = "$expiresAt > (50%)", filter = { range = { "$expiresAt" = { gt = 500000 } } } },
+    { name = "project 40 + $expiresAt > (10%)", filter = { and = [{ eq = { project = 40 } }, { range = { "$expiresAt" = { gt = 900000 } } }] } },
+    { name = "$expiresAt > (10%) + project 40", filter = { and = [{ range = { "$expiresAt" = { gt = 900000 } } }, { eq = { project = 40 } }] } },
+
+    # One posting list per value: cost per distinct value read.
+    { name = "id (one record)", filter = { eq = { id = 1 } } },
+    { name = "id range (1000 ids)", filter = { range = { id = { gte = 1, lte = 1000 } } } },
+    { name = "id prefix (4095 ids)", filter = { prefix = { id = "000000000000000000000000000000000" } } },
+    { name = "project in top 10", filter = { in = { project = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9] } } },
+]
